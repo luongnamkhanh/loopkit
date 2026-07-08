@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+.loopkit_memory/
+state/
+run_journal.jsonl
+.DS_Store
