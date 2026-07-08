@@ -51,7 +51,7 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 ## 5 · Roles (per-agent)
 | Item | Status | Note |
 |---|---|---|
-| Souls ×4 (orchestrator/code/infra/reviewer) | ✅ | `roles.py` |
+| Souls ×5 (orchestrator/code/infra/reviewer/analyst) | ✅ | `roles.py` |
 | Tool scopes declared (least-privilege) | ✅ | metadata only |
 | Skills EXECUTION (real tool use mid-run) | ✅ | `engine.run_agent` (headless Claude Code, `--allowedTools`, cwd=workspace); generator writes `solution.py`, reviewer ACTS (pytest-only bash — no `python3 -c` write escape); **off by default** (`LOOPKIT_ENABLE_TOOLS=1` to enable); repo mode reads target repo's AGENTS.md natively |
 | Empty-artifact observability | ✅ ❗ | gap found live (run `r1783483318192` exhausted 4× "empty artifact" with zero clues): no-file turns now journal `agent_reply_tail`+`ts` and emit "tool session said…"; `gates.derive_tests` prints why validation failed. Observability only — root cause of the silent claude session not identified; pinned by `test_p3.py::test_toolmode_empty_artifact_surfaces_agent_reply` |
@@ -68,6 +68,7 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Item | Status | Note |
 |---|---|---|
 | Intake (@mention + mandatory DoD) | ✅ | live, tested end-to-end |
+| Idea-refinement intake (idea → Q&A → ticket) | ✅ | spec 2026-07-08: mention KHÔNG DoD → analyst hỏi ≤`REFINE_MAX_TURNS` câu (reply thường trong thread), draft Goal+DoD+Tests qua gate `parse_ticket`+AST TRƯỚC khi post; [Approve & Run] đọc draft từ registry (restart-safe, event-driven — không cần doors.json analog); statuses refining/ticket_drafted/ticket_approved/refine_cancelled (reaper không đụng); TẮT khi ENABLE_MEMORY=0 |
 | Streamed step updates into thread | ✅ | live |
 | Approve/Reject buttons (four-eyes) | ✅ | live; audit persisted via `Memory.audit`; stale clicks never overwrite; door message now SHOWS the artifact (real-ops finding: was a blind approval) |
 | Thread follow-ups (`message.channels`) | ✅ | reply with `DoD:` in an owned thread → new run seeded with previous artifact (revision base). Needs Slack scopes `channels:history`(+groups) + `message.channels` events + reinstall. Known edges: reply containing any `<@mention>` is ceded to app_mention; dead if ENABLE_MEMORY off |

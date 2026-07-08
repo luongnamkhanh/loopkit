@@ -28,7 +28,7 @@ try:                                             # websocket-client transport: m
 except ImportError:                              # pip install websocket-client  to enable
     from slack_bolt.adapter.socket_mode import SocketModeHandler
     _ADAPTER = "builtin"
-import config, gates, shield
+import config, gates, refine, shield
 from engine import Ticket, run_loop, read_agents_md, finish_suspended
 from memory import Memory
 from workspace import make_workspace
@@ -135,6 +135,55 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
     threading.Thread(target=work, daemon=True).start()
     return True
 
+# ---- idea refinement (spec 2026-07-08): mention không DoD -> Q&A -> ticket draft -> button ----
+def start_refinement(client, channel, thread, text):
+    idea = re.sub(r"<@[^>]+>", "", text or "").strip()
+    MEM.register(str(thread), status="refining", idea=_guard(idea[:500]), refine_turns=0)
+    client.chat_postMessage(channel=channel, thread_ts=thread,
+        text="💡 Chưa có DoD — vào chế độ refinement. Trả lời vài câu hỏi để build ticket "
+             "(reply thường trong thread, không cần mention).")
+    threading.Thread(target=_refine_step, args=(client, channel, thread), daemon=True).start()
+
+
+def _refine_step(client, channel, thread):
+    """Một lượt refinement: đọc state từ DISK (registry + session) -> analyst -> post.
+    Stateless: restart giữa chừng không mất gì."""
+    try:
+        run = MEM.get_run(str(thread))
+        history = [{"role": e["role"], "text": e["text"]}
+                   for e in MEM.events(str(thread)) if e.get("stage") == "refine"]
+        turns = run.get("refine_turns", 0)
+        kind, text = refine.refine_turn(run.get("idea", ""), history, turns,
+                                        config.REFINE_MAX_TURNS)
+        if kind == "error":
+            client.chat_postMessage(channel=channel, thread_ts=thread,
+                                    text="💥 refinement lỗi — reply để thử lại.")
+            return
+        if kind == "ask":
+            MEM.append_event(str(thread), {"stage": "refine", "role": "analyst",
+                                           "text": _guard(text)})
+            MEM.register(str(thread), refine_turns=turns + 1)
+            client.chat_postMessage(channel=channel, thread_ts=thread,
+                text=_guard(f"❓ ({turns + 1}/{config.REFINE_MAX_TURNS}) {text}"))
+            return
+        MEM.register(str(thread), status="ticket_drafted", draft=text)   # draft RAW (như artifact)
+        warn = ("\n⚠️ Tests trong draft KHÔNG hợp lệ — Approve sẽ rơi về derive-from-DoD."
+                if kind == "draft_unvalidated" else "")
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text="Ticket draft — approve để chạy loop?",
+            blocks=[{"type": "section", "text": {"type": "mrkdwn",
+                     "text": _guard(f"🎫 *Ticket draft:*\n```{text[:2500]}```{warn}\n"
+                                    f"_Reply để góp ý (analyst sửa lại), hoặc:_")}},
+                    {"type": "actions", "elements": [
+                {"type": "button", "style": "primary", "action_id": "ticket_approve",
+                 "text": {"type": "plain_text", "text": "Approve & Run"}, "value": str(thread)},
+                {"type": "button", "style": "danger", "action_id": "ticket_reject",
+                 "text": {"type": "plain_text", "text": "Hủy"}, "value": str(thread)}]}])
+    except Exception as e:
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+                                text=_guard(f"💥 refinement error: {e}"))
+
+
 @app.event("app_mention")                           # INTAKE
 def on_mention(event, client, body):
     if event.get("bot_id"):
@@ -142,10 +191,14 @@ def on_mention(event, client, body):
     if shield.seen_event(body.get("event_id", "")):  # Slack retries -> process each event once
         return
     thread = event.get("thread_ts", event["ts"])
-    if not launch_ticket(client, event["channel"], thread, event.get("text", "")):
+    if launch_ticket(client, event["channel"], thread, event.get("text", "")):
+        return
+    if MEM is None:                                  # refinement cần registry+session làm state
         client.chat_postMessage(channel=event["channel"], thread_ts=thread,
             text="🙅 Thiếu Definition of Done. Cú pháp:\n"
                  "`@bot <objective+context>   DoD: <EARS criteria>   [Tests: <pytest code>]`")
+        return
+    start_refinement(client, event["channel"], thread, event.get("text", ""))
 
 @app.event("message")                               # THREAD FOLLOW-UPS (P3)
 def on_followup(event, client, body):
@@ -158,6 +211,16 @@ def on_followup(event, client, body):
         return
     run = MEM.get_run(str(thread))
     if not run:                                     # only threads loopkit owns
+        return
+    if run.get("status") in ("refining", "ticket_drafted"):   # refinement: mọi reply đều nhận
+        if shield.seen_event(body.get("event_id", "")):
+            return
+        MEM.append_event(str(thread), {"stage": "refine", "role": "user",
+                                       "text": _guard(event.get("text", ""))})
+        if run.get("status") == "ticket_drafted":             # góp ý trên draft -> redraft
+            MEM.register(str(thread), status="refining")
+        threading.Thread(target=_refine_step, args=(client, event["channel"], thread),
+                         daemon=True).start()
         return
     if not re.search(r"(?i)\bdod:", event.get("text", "")):
         return                                      # silent: ordinary chatter in the thread
@@ -189,6 +252,31 @@ def _resolve(body, decision):
     elif MEM:                                        # truly stale click: evidence, no overwrite
         MEM.append_event(str(ts), {"stage": "human_door_stale", "approver": user,
                                    "approved": decision})
+
+
+@app.action("ticket_approve")
+def _ticket_approve(ack, body):
+    ack()
+    ts = body["actions"][0]["value"]
+    run = MEM.get_run(str(ts)) if MEM else {}
+    ch = body.get("channel", {}).get("id")
+    if run.get("status") == "ticket_drafted" and run.get("draft") and ch:
+        MEM.register(str(ts), status="ticket_approved")       # chặn double-click double-run
+        MEM.append_event(str(ts), {"stage": "ticket_approved",
+                                   "approver": body.get("user", {}).get("id", "?")})
+        launch_ticket(app.client, ch, ts, run["draft"])
+    # else: click stale (đã chạy/đã hủy) -> im lặng, không overwrite
+
+
+@app.action("ticket_reject")
+def _ticket_reject(ack, body):
+    ack()
+    ts = body["actions"][0]["value"]
+    if MEM and MEM.get_run(str(ts)).get("status") == "ticket_drafted":
+        MEM.register(str(ts), status="refine_cancelled")
+        ch = body.get("channel", {}).get("id")
+        if ch:
+            app.client.chat_postMessage(channel=ch, thread_ts=ts, text="🚫 Draft đã hủy.")
 
 if __name__ == "__main__":
     if MEM:
