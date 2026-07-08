@@ -34,6 +34,7 @@ class Memory:
         (self.dir / "sessions").mkdir(parents=True, exist_ok=True)
         self.reg_path = self.dir / "registry.json"
         self.cache_path = self.dir / "cache.json"
+        self.doors_path = self.dir / "doors.json"
         self._lock = threading.Lock()        # slack_app runs one thread per ticket
 
     def _load(self, path: pathlib.Path) -> dict:
@@ -64,6 +65,22 @@ class Memory:
         for t in dead:
             self.append_event(t, {"stage": "interrupted", "at": time.time()})
         return dead
+
+    # --- durable doors (§8.1): a run suspended at the human door survives restarts ---
+    def door_open(self, thread_id: str, payload: dict):
+        with self._lock:
+            doors = self._load(self.doors_path)
+            doors[thread_id] = {**payload, "opened_at": time.time()}
+            self.doors_path.write_text(json.dumps(doors, ensure_ascii=False, indent=1))
+
+    def door_get(self, thread_id: str):
+        return self._load(self.doors_path).get(thread_id)
+
+    def door_close(self, thread_id: str):
+        with self._lock:
+            doors = self._load(self.doors_path)
+            if doors.pop(thread_id, None) is not None:
+                self.doors_path.write_text(json.dumps(doors, ensure_ascii=False, indent=1))
 
     # --- session: per-thread history on disk ---
     def append_event(self, thread_id: str, event: dict):

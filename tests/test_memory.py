@@ -99,3 +99,25 @@ def test_reap_running_flips_only_dead_runs(tmp_path):
     assert mem.get_run("fine")["status"] == "done"          # untouched
     assert mem.events("dead")[-1]["stage"] == "interrupted"  # evidence on disk
     assert mem.reap_running() == []                          # idempotent
+
+
+def test_doors_roundtrip_and_idempotent_close(tmp_path):
+    """§8.1: a door persisted on disk survives the process; close is idempotent."""
+    mem = Memory(str(tmp_path / "m"))
+    assert mem.door_get("t1") is None
+    mem.door_open("t1", {"channel": "C1", "artifact": "A", "goal": "g", "dod": "d"})
+    door = mem.door_get("t1")
+    assert door["channel"] == "C1" and door["artifact"] == "A" and "opened_at" in door
+    mem2 = Memory(str(tmp_path / "m"))                       # simulated restart
+    assert mem2.door_get("t1")["artifact"] == "A"
+    mem2.door_close("t1")
+    assert mem2.door_get("t1") is None
+    mem2.door_close("t1")                                    # no raise
+
+
+def test_reaper_leaves_awaiting_approval(tmp_path):
+    """§8.1: a run suspended at a persisted door is NOT dead — reaper must skip it."""
+    mem = Memory(str(tmp_path / "m"))
+    mem.register("suspended", status="awaiting_approval")
+    assert mem.reap_running() == []
+    assert mem.get_run("suspended")["status"] == "awaiting_approval"
