@@ -38,7 +38,7 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Registry: thread → run/state/budget | ✅ | `memory.py` (thread-safe; status running/done/done_cached/exhausted/interrupted) |
 | Session: per-thread history on disk | ✅ | `memory.py` sessions/<thread>.jsonl, masked |
 | Semantic cache: verified solutions keyed by ticket/DoD | ✅ | `memory.py` — exact-match MVP; stores only verified(+approved); risky recall still passes the door; recall checked BEFORE test-derivation (live finding: was wasting an LLM call) |
-| §8.1 durable execution | 🟡 | first brick: `Memory.reap_running()` at bot startup flips dead 'running' entries → interrupted (live finding: zombie registry entry after interrupted session). Door suspend/resume + durable dedupe still ⬜ |
+| §8.1 durable execution | ✅ | scoped "door+dedupe" (spec 2026-07-08): startup reaper; doors persist (`doors.json`, status `awaiting_approval`, reaper skips) → click-after-restart completes via `engine.finish_suspended`; slack event ids persist (`events.seen`, trimmed 1000 at boot). Full run-resume deliberately out of scope |
 
 ## 4 · Shield (flow-level, shared)
 | Item | Status | Note |
@@ -72,12 +72,12 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Approve/Reject buttons (four-eyes) | ✅ | live; audit persisted via `Memory.audit`; stale clicks never overwrite; door message now SHOWS the artifact (real-ops finding: was a blind approval) |
 | Thread follow-ups (`message.channels`) | ✅ | reply with `DoD:` in an owned thread → new run seeded with previous artifact (revision base). Needs Slack scopes `channels:history`(+groups) + `message.channels` events + reinstall. Known edges: reply containing any `<@mention>` is ceded to app_mention; dead if ENABLE_MEMORY off |
 | Rate-limit batching / long output as file | 🟡 | one msg per step; artifact truncated 2.5k |
-| Socket transport resilience | 🟡 ❗ | ops gap found live (BrokenPipe spam): prefer `websocket_client` adapter, fallback builtin; true restart-safety → §8.1 |
+| Socket transport resilience | 🟡 ❗ | ops gap found live (BrokenPipe spam): prefer `websocket_client` adapter, fallback builtin; door restart-safety ✅ (§8.1); mid-generation kills stay `interrupted` (accepted) |
 
 ## 8 · Hardening §8 (roof — deliberately after real tickets)
-§8.1 durable execution · §8.2 risk-classified gating (a `risky` flag exists; classification is
-manual) · §8.3 evaluator calibration · §8.4 golden set — all ⬜ by design; add when real runs
-demand them.
+§8.1 durable execution (✅ scoped door+dedupe) · §8.2 risk-classified gating (a `risky` flag
+exists; classification is manual) · §8.3 evaluator calibration · §8.4 golden set — rest ⬜ by
+design; add when real runs demand them.
 
 ---
 

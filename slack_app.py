@@ -17,7 +17,8 @@ LOOPKIT_TARGET_REPO points at a repo. Tool-mode (LOOPKIT_ENABLE_TOOLS=1): agents
 the workspace with role-scoped tools; in repo mode claude reads THAT repo's AGENTS.md natively,
 so loopkit's own context is not injected (single source of context).
 
-Human door blocks on threading.Event (MVP); hours-long/restart-safe -> durable suspend/resume (§8.1).
+Human door blocks on threading.Event; doors also persist to disk (§8.1), so a click arriving
+after a restart resumes and completes the run via engine.finish_suspended.
 """
 import os, pathlib, re, threading
 from slack_bolt import App
@@ -28,7 +29,7 @@ except ImportError:                              # pip install websocket-client 
     from slack_bolt.adapter.socket_mode import SocketModeHandler
     _ADAPTER = "builtin"
 import config, gates, shield
-from engine import Ticket, run_loop, read_agents_md
+from engine import Ticket, run_loop, read_agents_md, finish_suspended
 from memory import Memory
 from workspace import make_workspace
 
@@ -49,9 +50,13 @@ app = App(token=BOT_TOKEN)
 _pending = {}   # thread_ts -> {"event": threading.Event, "approved": bool}
 
 # ---- Slack human door: post artifact + Approve/Reject, block until a human clicks ----
-def make_door(thread_ts, client, channel):
+def make_door(thread_ts, client, channel, goal, dod):
     def door(artifact: str) -> bool:
         ev = threading.Event(); _pending[thread_ts] = {"event": ev, "approved": False}
+        if MEM:                                  # §8.1: persist so a restart can resume it
+            MEM.door_open(thread_ts, {"channel": channel, "artifact": artifact,
+                                      "goal": goal, "dod": dod})
+            MEM.register(thread_ts, status="awaiting_approval")
         preview = _guard((artifact or "")[:1500])    # never ask a blind approval
         client.chat_postMessage(channel=channel, thread_ts=thread_ts,
             text="Reviewer PASS — approve this change?",
@@ -62,7 +67,9 @@ def make_door(thread_ts, client, channel):
                  "text": {"type": "plain_text", "text": "Approve"}, "value": thread_ts},
                 {"type": "button", "style": "danger", "action_id": "reject",
                  "text": {"type": "plain_text", "text": "Reject"}, "value": thread_ts}]}])
-        ev.wait(timeout=3600)                       # MVP: block until click; prod = durable suspend/resume
+        ev.wait(timeout=3600)                       # in-process wait; disk is the recovery path
+        if MEM:
+            MEM.door_close(thread_ts)
         return _pending.pop(thread_ts, {"approved": False})["approved"]
     return door
 
@@ -105,7 +112,7 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
                     notify("⚠️ Không derive được test từ DoD — gate = compile-only (YẾU). "
                            "Cân nhắc gửi lại kèm `Tests:`.")
             t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
-            res = run_loop(t, human_door=make_door(thread, client, channel),
+            res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod),
                            notify=notify, project_context=EFFECTIVE_CTX,
                            journal_dir=str(WORKDIR), memory=MEM, thread_id=str(thread),
                            workspace=wd)
@@ -166,12 +173,20 @@ def _reject(ack, body): ack(); _resolve(body, False)
 def _resolve(body, decision):
     ts = body["actions"][0]["value"]
     user = body.get("user", {}).get("id", "?")
-    if ts in _pending:
+    if ts in _pending:                               # live click: run_loop thread finishes it
         if MEM:                                      # four-eyes audit trail on disk (who + what)
             MEM.audit(str(ts), approver=user, decision=decision)
         _pending[ts]["approved"] = decision
         _pending[ts]["event"].set()
-    elif MEM:                                        # stale click: keep evidence, never overwrite
+        return
+    door = MEM.door_get(str(ts)) if MEM else None
+    if door:                                         # §8.1 resume: process died at this door
+        MEM.audit(str(ts), approver=user, decision=decision)
+        finish_suspended(MEM, str(ts), door, decision,
+                         lambda msg: app.client.chat_postMessage(
+                             channel=door["channel"], thread_ts=ts, text=msg))
+        MEM.door_close(str(ts))
+    elif MEM:                                        # truly stale click: evidence, no overwrite
         MEM.append_event(str(ts), {"stage": "human_door_stale", "approver": user,
                                    "approved": decision})
 
@@ -180,6 +195,7 @@ if __name__ == "__main__":
         dead = MEM.reap_running()                    # a 'running' entry at boot is a dead run
         if dead:
             print(f"[loopkit] reaped {len(dead)} interrupted run(s): {', '.join(dead)}")
+    shield.init_dedupe(pathlib.Path(config.MEMORY_DIR) / "events.seen")
     mode = f"transport={_ADAPTER}, tools={'ON' if config.ENABLE_TOOLS else 'off'}"
     if config.TARGET_REPO:
         mode += f", repo={config.TARGET_REPO}"
