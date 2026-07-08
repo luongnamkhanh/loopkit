@@ -51,6 +51,20 @@ class Memory:
     def get_run(self, thread_id: str) -> dict:
         return self._load(self.reg_path).get(thread_id, {})
 
+    def reap_running(self) -> list:
+        """§8.1 first brick — startup reconcile: single-process bot, so any 'running' entry
+        at boot is a dead run (process died mid-loop). Flip to 'interrupted', keep evidence."""
+        with self._lock:
+            reg = self._load(self.reg_path)
+            dead = [t for t, r in reg.items() if r.get("status") == "running"]
+            for t in dead:
+                reg[t].update(status="interrupted", updated_at=time.time())
+            if dead:
+                self.reg_path.write_text(json.dumps(reg, ensure_ascii=False, indent=1))
+        for t in dead:
+            self.append_event(t, {"stage": "interrupted", "at": time.time()})
+        return dead
+
     # --- session: per-thread history on disk ---
     def append_event(self, thread_id: str, event: dict):
         p = self.dir / "sessions" / f"{_safe(thread_id)}.jsonl"

@@ -35,10 +35,10 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Item | Status | Note |
 |---|---|---|
 | Journal per turn | ✅ | append-only with unique `run_id`+`thread_id`; masked; never wipes |
-| Registry: thread → run/state/budget | ✅ | `memory.py` (thread-safe; status running/done/done_cached/exhausted) |
+| Registry: thread → run/state/budget | ✅ | `memory.py` (thread-safe; status running/done/done_cached/exhausted/interrupted) |
 | Session: per-thread history on disk | ✅ | `memory.py` sessions/<thread>.jsonl, masked |
 | Semantic cache: verified solutions keyed by ticket/DoD | ✅ | `memory.py` — exact-match MVP; stores only verified(+approved); risky recall still passes the door; recall checked BEFORE test-derivation (live finding: was wasting an LLM call) |
-| §8.1 durable execution (Temporal) | ⬜ | roof; journal design is durable-friendly |
+| §8.1 durable execution | 🟡 | first brick: `Memory.reap_running()` at bot startup flips dead 'running' entries → interrupted (live finding: zombie registry entry after interrupted session). Door suspend/resume + durable dedupe still ⬜ |
 
 ## 4 · Shield (flow-level, shared)
 | Item | Status | Note |

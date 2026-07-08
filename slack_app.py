@@ -176,6 +176,10 @@ def _resolve(body, decision):
                                    "approved": decision})
 
 if __name__ == "__main__":
+    if MEM:
+        dead = MEM.reap_running()                    # a 'running' entry at boot is a dead run
+        if dead:
+            print(f"[loopkit] reaped {len(dead)} interrupted run(s): {', '.join(dead)}")
     mode = f"transport={_ADAPTER}, tools={'ON' if config.ENABLE_TOOLS else 'off'}"
     if config.TARGET_REPO:
         mode += f", repo={config.TARGET_REPO}"

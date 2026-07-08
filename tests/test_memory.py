@@ -87,3 +87,15 @@ def test_session_and_registry(tmp_path, monkeypatch):
     _run(Ticket(goal="g", dod="d", verifier=lambda a: (True, "ok")), mem, tmp_path, "s1")
     assert len(mem.events("s1")) >= 1           # session history readable back from disk
     assert mem.get_run("s1")["status"] == "done"
+
+
+def test_reap_running_flips_only_dead_runs(tmp_path):
+    """§8.1 reaper: at boot every 'running' entry is dead — flip to interrupted, audit, idempotent."""
+    mem = Memory(str(tmp_path / "m"))
+    mem.register("dead", status="running")
+    mem.register("fine", status="done", approved=True)
+    assert mem.reap_running() == ["dead"]
+    assert mem.get_run("dead")["status"] == "interrupted"
+    assert mem.get_run("fine")["status"] == "done"          # untouched
+    assert mem.events("dead")[-1]["stage"] == "interrupted"  # evidence on disk
+    assert mem.reap_running() == []                          # idempotent
