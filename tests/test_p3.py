@@ -1,5 +1,5 @@
 """P3 verifiers — tool execution, model tiering, worktree isolation, registry artifact."""
-import pathlib, subprocess
+import json, pathlib, subprocess
 import config, engine, roles, workspace
 from engine import Ticket, run_loop
 from memory import Memory
@@ -47,6 +47,23 @@ def test_toolmode_no_file_fails_closed(tmp_path, monkeypatch):
     res = run_loop(t, journal_dir=str(tmp_path), notify=lambda m: None,
                    workspace=str(ws), max_turns=2)
     assert res["ok"] is False                                            # exhausted, fail-closed
+
+
+def test_toolmode_empty_artifact_surfaces_agent_reply(tmp_path, monkeypatch):
+    """Live gap (run r1783483318192 exhausted 4× with zero clues): a no-file turn must
+    journal agent_reply_tail + ts and say WHY in the thread — not just 'empty artifact'."""
+    monkeypatch.setattr(config, "ENABLE_TOOLS", True)
+    monkeypatch.setattr(config, "ENABLE_MEMORY", False)
+    monkeypatch.setattr(engine, "ask_claude", fake_ask)
+    monkeypatch.setattr(engine, "run_agent", fake_agent_factory(None))   # agent writes nothing
+    ws = tmp_path / "ws"; ws.mkdir()
+    seen = []
+    t = Ticket(goal="g", dod="d", verifier=lambda a: (bool(a.strip()), "empty artifact"))
+    run_loop(t, journal_dir=str(tmp_path), notify=seen.append,
+             workspace=str(ws), max_turns=1)
+    entry = json.loads((tmp_path / "run_journal.jsonl").read_text().splitlines()[0])
+    assert entry["agent_reply_tail"] == "done" and "ts" in entry
+    assert any("tool session said: done" in m for m in seen)
 
 
 def test_textmode_default_unchanged(tmp_path, monkeypatch):

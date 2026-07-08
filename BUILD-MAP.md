@@ -54,6 +54,7 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Souls ×4 (orchestrator/code/infra/reviewer) | ✅ | `roles.py` |
 | Tool scopes declared (least-privilege) | ✅ | metadata only |
 | Skills EXECUTION (real tool use mid-run) | ✅ | `engine.run_agent` (headless Claude Code, `--allowedTools`, cwd=workspace); generator writes `solution.py`, reviewer ACTS (pytest-only bash — no `python3 -c` write escape); **off by default** (`LOOPKIT_ENABLE_TOOLS=1` to enable); repo mode reads target repo's AGENTS.md natively |
+| Empty-artifact observability | ✅ ❗ | gap found live (run `r1783483318192` exhausted 4× "empty artifact" with zero clues): no-file turns now journal `agent_reply_tail`+`ts` and emit "tool session said…"; `gates.derive_tests` prints why validation failed. Observability only — root cause of the silent claude session not identified; pinned by `test_p3.py::test_toolmode_empty_artifact_surfaces_agent_reply` |
 
 ## 6 · Project layer
 | Item | Status | Note |
