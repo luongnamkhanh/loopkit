@@ -48,6 +48,9 @@ ENABLE_TOOLS = _env_bool("ENABLE_TOOLS", False)   # off by default: text mode = 
 AGENT_TIMEOUT = _env_int("AGENT_TIMEOUT", 600)    # tool sessions run much longer than one-shot
 TARGET_REPO = _env_str("TARGET_REPO", "")         # git repo for worktree workspaces ("" = standalone)
 
+# --- idea refinement (intake stage) ---
+REFINE_MAX_TURNS = _env_int("REFINE_MAX_TURNS", 5)   # trần câu hỏi trước khi BUỘC draft
+
 
 # --- per-role model tiering (design §1: cheap router, mid workers, strong separate judge) ---
 def _env_model(role: str, default: str):
@@ -58,4 +61,5 @@ def _env_model(role: str, default: str):
 ROLE_MODELS = {"orchestrator": _env_model("orchestrator", "haiku"),
                "code": _env_model("code", "sonnet"),
                "infra": _env_model("infra", "sonnet"),
+               "analyst": _env_model("analyst", "sonnet"),
                "reviewer": _env_model("reviewer", "opus")}

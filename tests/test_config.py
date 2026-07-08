@@ -11,7 +11,7 @@ def test_defaults():
     assert config.ENABLE_MEMORY is True
     assert isinstance(config.JOURNAL_DIR, str) and isinstance(config.MEMORY_DIR, str)
     assert isinstance(config.BRAIN_CWD, str)          # neutral brain cwd (no double-inject)
-    assert set(config.ROLE_MODELS) == {"orchestrator", "code", "infra", "reviewer"}
+    assert set(config.ROLE_MODELS) == {"orchestrator", "code", "infra", "reviewer", "analyst"}
 
 
 def test_env_override_int(monkeypatch):

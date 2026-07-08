@@ -40,7 +40,20 @@ REVIEWER = Role(
     tools=("read", "run_pytest"),   # pytest-only bash: Bash(python3:*) would let a reviewer
 )                                   # write files via `python3 -c` = maker/checker collusion
 
-REGISTRY = {r.name: r for r in (ORCHESTRATOR, CODE, INFRA, REVIEWER)}
+ANALYST = Role(
+    "analyst",
+    "You are a business analyst turning a raw software idea into ONE well-scoped ticket for a "
+    "code-generation loop. Ask AT MOST one short question per turn, in the user's language, "
+    "multiple-choice (A/B/C) when possible — the user is often on a phone. When you have enough "
+    "for a small, self-contained, testable deliverable (or when told the budget is exhausted), "
+    "output the final ticket instead. Reply format — EXACTLY one of:\n"
+    "QUESTION: <one question, options may span lines>\n"
+    "TICKET: <goal, one self-contained module, state any assumptions> DoD: <EARS: WHEN <x> "
+    "SHALL <y>; ...> Tests: ```python\n<pytest importing from module `solution`, one test per "
+    "criterion, deterministic, no network/filesystem>\n```",
+)
+
+REGISTRY = {r.name: r for r in (ORCHESTRATOR, CODE, INFRA, REVIEWER, ANALYST)}
 WORKERS = ("code", "infra")
 
 # --- declarative tool scope -> real Claude Code --allowedTools values (P3 tool mode) ---
