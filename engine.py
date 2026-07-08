@@ -200,3 +200,19 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
     record({"stage": "exhausted", "turns": max_turns})
     return {"ok": False, "worker": worker, "turns": max_turns,
             "reason": "budget exhausted -> escalate"}
+
+
+def finish_suspended(mem, thread_id: str, payload: dict, decision: bool,
+                     notify: Callable[[str], None]) -> None:
+    """§8.1 resume path: complete a run whose process died while suspended at the human
+    door. Mirrors run_loop's post-door tail (register done -> cache only if approved ->
+    deliver) from the persisted door payload. `turns` is unknown here and stays absent."""
+    guard = shield.mask if config.ENABLE_SHIELD else (lambda s: s)
+    artifact = payload.get("artifact", "")
+    mem.register(thread_id, status="done", approved=decision, artifact=artifact[:4000])
+    if decision:
+        mem.store(payload.get("goal", ""), payload.get("dod", ""), artifact)
+        notify("✅ approved (resumed sau restart)")
+        notify(f"📦 artifact:\n```\n{guard(artifact[:2500])}\n```")
+    else:
+        notify("🚫 rejected (resumed sau restart) — không áp dụng artifact")

@@ -1,5 +1,6 @@
 """Regression tests from live operation: reviewer-verdict parsing (fail-closed but tolerant)."""
 import config, engine, roles
+from memory import Memory
 from engine import Ticket, run_loop
 
 
@@ -30,3 +31,28 @@ def test_buried_verdict_is_found(tmp_path, monkeypatch):
 def test_no_verdict_anywhere_fails_closed(tmp_path, monkeypatch):
     res = _run(tmp_path, monkeypatch, "just prose, no verdict line at all")
     assert res["ok"] is False and res["reason"].startswith("budget exhausted")
+
+
+def test_finish_suspended_approve_registers_caches_delivers(tmp_path):
+    """§8.1 resume: approve after restart -> registry done/approved, cached, delivered."""
+    mem = Memory(str(tmp_path / "m"))
+    mem.register("t1", status="awaiting_approval")
+    msgs = []
+    payload = {"channel": "C1", "artifact": "X=1", "goal": "g", "dod": "d"}
+    engine.finish_suspended(mem, "t1", payload, True, msgs.append)
+    run = mem.get_run("t1")
+    assert run["status"] == "done" and run["approved"] is True
+    assert mem.recall("g", "d") == "X=1"                    # cached: verified+approved
+    assert any("X=1" in m for m in msgs)                    # artifact delivered
+
+
+def test_finish_suspended_reject_no_cache_no_artifact(tmp_path):
+    mem = Memory(str(tmp_path / "m"))
+    mem.register("t1", status="awaiting_approval")
+    msgs = []
+    payload = {"channel": "C1", "artifact": "X=1", "goal": "g", "dod": "d"}
+    engine.finish_suspended(mem, "t1", payload, False, msgs.append)
+    run = mem.get_run("t1")
+    assert run["status"] == "done" and run["approved"] is False
+    assert mem.recall("g", "d") is None                     # NEVER cache a rejected artifact
+    assert not any("X=1" in m for m in msgs)                # and never deliver it
