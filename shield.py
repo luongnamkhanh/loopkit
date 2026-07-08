@@ -9,9 +9,9 @@ mask(text)        redact secrets/PII before text crosses a boundary (Slack post,
 seen_event(id)    dedupe Slack event deliveries (Slack RETRIES on slow ack -> double-run risk).
 
 Deliberately small pattern list; add domain guards (sqlguard-style AST, etc.) only when the
-domain needs them. Dedupe is in-memory per process (MVP) — durable dedupe arrives with §8.1.
+domain needs them. Dedupe is in-memory, durable across restarts once init_dedupe() ran (§8.1).
 """
-import re
+import pathlib, re
 from collections import OrderedDict
 
 MASK = "[REDACTED]"
@@ -41,6 +41,20 @@ def mask(text: str) -> str:
 # --- Slack event dedupe (bounded, in-memory) ---
 _seen: "OrderedDict[str, None]" = OrderedDict()
 _MAX_SEEN = 1000
+_seen_path = None            # set by init_dedupe -> ids also persist to disk (§8.1)
+
+
+def init_dedupe(path):
+    """§8.1 durable dedupe: load the last _MAX_SEEN ids from disk into _seen, trim the
+    file to exactly those, and append every new id from now on. Call once at startup."""
+    global _seen_path
+    p = pathlib.Path(path)
+    ids = [i for i in p.read_text().splitlines() if i][-_MAX_SEEN:] if p.exists() else []
+    for i in ids:
+        _seen[i] = None
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(ids) + ("\n" if ids else ""))
+    _seen_path = p
 
 
 def seen_event(event_id: str) -> bool:
@@ -50,6 +64,9 @@ def seen_event(event_id: str) -> bool:
     if event_id in _seen:
         return True
     _seen[event_id] = None
+    if _seen_path:
+        with open(_seen_path, "a") as f:                    # ponytail: append-only during a
+            f.write(event_id + "\n")                        # session; re-trimmed at startup
     if len(_seen) > _MAX_SEEN:
         _seen.popitem(last=False)
     return False

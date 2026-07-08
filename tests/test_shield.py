@@ -1,5 +1,6 @@
 """T3 verifier — shield.py DoD made runnable."""
 import shield
+from collections import OrderedDict
 
 
 def test_masks_slack_tokens():
@@ -30,3 +31,28 @@ def test_seen_event_dedupe():
     assert shield.seen_event("Ev_test_123") is True    # retry -> skip
     assert shield.seen_event("") is False              # no id -> never dedupe
     assert shield.seen_event("") is False
+
+
+def test_dedupe_survives_restart(tmp_path, monkeypatch):
+    """§8.1: a Slack retry delivered after a bot restart must still be deduped."""
+    monkeypatch.setattr(shield, "_seen", OrderedDict())
+    monkeypatch.setattr(shield, "_seen_path", None)
+    f = tmp_path / "events.seen"
+    shield.init_dedupe(f)
+    assert shield.seen_event("ev1") is False
+    assert shield.seen_event("ev1") is True
+    monkeypatch.setattr(shield, "_seen", OrderedDict())      # simulated restart
+    monkeypatch.setattr(shield, "_seen_path", None)
+    shield.init_dedupe(f)
+    assert shield.seen_event("ev1") is True                  # remembered across restart
+
+
+def test_dedupe_file_trimmed_at_startup(tmp_path, monkeypatch):
+    monkeypatch.setattr(shield, "_seen", OrderedDict())
+    monkeypatch.setattr(shield, "_seen_path", None)
+    f = tmp_path / "events.seen"
+    f.write_text("\n".join(f"e{i}" for i in range(1500)) + "\n")
+    shield.init_dedupe(f)
+    lines = f.read_text().splitlines()
+    assert len(lines) == 1000 and lines[0] == "e500"         # last 1000 kept
+    assert shield.seen_event("e1499") is True                # loaded into memory too
