@@ -6,7 +6,7 @@ workspace lấy từ cwd (git repo -> worktree per ticket; không phải git -> 
 import argparse, subprocess, time
 
 from loopkit import __version__, config, gates, refine, shield
-from loopkit.engine import Ticket, run_loop, read_agents_md
+from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
 from loopkit.memory import Memory
 from loopkit.workspace import make_workspace
 
@@ -34,6 +34,20 @@ def _cwd_repo() -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _build_verifier(mem, goal, dod, tests_src, wd):
+    if mem and mem.recall(goal, dod) is not None:
+        return gates.make_compile_gate(wd)           # unused: run_loop recall trước gate
+    if tests_src:
+        print("🧪 gate = pytest (tests từ ticket)")
+        return gates.make_pytest_gate(tests_src, wd)
+    derived = gates.derive_tests(goal, dod)          # fresh call TRƯỚC generation; frozen
+    if derived:
+        print(f"🧪 gate = pytest (derived, frozen):\n{_mask(derived[:1200])}")
+        return gates.make_pytest_gate(derived, wd)
+    print("⚠️ Không derive được test — gate compile-only (YẾU).")
+    return gates.make_compile_gate(wd)
+
+
 def cmd_run(text: str, thread=None) -> int:
     repo_name, text = gates.parse_repo(text)
     if repo_name:
@@ -48,19 +62,7 @@ def cmd_run(text: str, thread=None) -> int:
     wd, kind = make_workspace(thread, repo=repo)
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
-    if mem and mem.recall(goal, dod) is not None:
-        verifier = gates.make_compile_gate(wd)       # unused: run_loop recall trước gate
-    elif tests_src:
-        verifier = gates.make_pytest_gate(tests_src, wd)
-        print("🧪 gate = pytest (tests từ ticket)")
-    else:
-        derived = gates.derive_tests(goal, dod)      # fresh call TRƯỚC generation; frozen
-        if derived:
-            verifier = gates.make_pytest_gate(derived, wd)
-            print(f"🧪 gate = pytest (derived, frozen):\n{_mask(derived[:1200])}")
-        else:
-            verifier = gates.make_compile_gate(wd)
-            print("⚠️ Không derive được test — gate compile-only (YẾU).")
+    verifier = _build_verifier(mem, goal, dod, tests_src, wd)
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
     t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
     res = run_loop(t, human_door=terminal_door, notify=print, project_context=ctx,
@@ -123,6 +125,131 @@ def cmd_idea(idea: str) -> int:
         return 130
 
 
+# ---- agent-mode verbs (Claude-session front): mỗi lệnh một bước, state trên disk ----
+def _agent_refine_step(mem, thread) -> int:
+    run = mem.get_run(thread)
+    history = [{"role": e["role"], "text": e["text"]}
+               for e in mem.events(thread) if e.get("stage") == "refine"]
+    turns = run.get("refine_turns", 0)
+    kind, text = refine.refine_turn(run.get("idea", ""), history, turns,
+                                    config.REFINE_MAX_TURNS)
+    if kind == "error":
+        print("FAILED: refinement error — thử lại lệnh")
+        return 1
+    if kind == "ask":
+        mem.append_event(thread, {"stage": "refine", "role": "analyst", "text": _mask(text)})
+        mem.register(thread, refine_turns=turns + 1)
+        print(f"QUESTION: {_mask(text)}")
+        return 0
+    mem.register(thread, status="ticket_drafted", draft=text)
+    if kind == "draft_unvalidated":
+        print("DRAFT_UNVALIDATED: tests trong draft không hợp lệ — run sẽ derive từ DoD")
+    print("DRAFT:")
+    print(_mask(text))
+    print("DRAFT_END")
+    return 0
+
+
+def cmd_idea_start(idea: str) -> int:
+    mem = _mem()
+    if mem is None:
+        print("FAILED: cần LOOPKIT_ENABLE_MEMORY=1")
+        return 1
+    thread = f"cli-{int(time.time() * 1000)}"
+    mem.register(thread, status="refining", idea=_mask(idea[:500]), refine_turns=0)
+    print(f"THREAD: {thread}")
+    return _agent_refine_step(mem, thread)
+
+
+def cmd_idea_answer(thread: str, answer: str) -> int:
+    mem = _mem()
+    run = mem.get_run(thread) if mem else {}
+    if run.get("status") not in ("refining", "ticket_drafted"):
+        print(f"STALE: thread không ở refinement (status={run.get('status')})")
+        return 1
+    mem.append_event(thread, {"stage": "refine", "role": "user", "text": _mask(answer)})
+    if run.get("status") == "ticket_drafted":                   # góp ý trên draft -> redraft
+        mem.register(thread, status="refining")
+    return _agent_refine_step(mem, thread)
+
+
+def make_suspend_door(mem, thread, goal, dod):
+    """Door không chặn cho agent-mode: persist rồi trả False — approve là lệnh riêng."""
+    def door(artifact: str) -> bool:
+        mem.door_open(thread, {"channel": "cli", "artifact": artifact,
+                               "goal": goal, "dod": dod})
+        return False
+    return door
+
+
+def cmd_ticket_run(thread: str) -> int:
+    mem = _mem()
+    run = mem.get_run(thread) if mem else {}
+    draft = run.get("draft")
+    if run.get("status") != "ticket_drafted" or not draft:
+        print(f"STALE: thread chưa có draft (status={run.get('status')})")
+        return 1
+    repo_name, text = gates.parse_repo(draft)
+    goal, dod, tests_src = gates.parse_ticket(text)
+    if not dod:
+        print("FAILED: draft không parse được DoD")
+        return 1
+    mem.register(thread, status="ticket_approved")
+    repo = _cwd_repo()
+    wd, kind = make_workspace(thread, repo=repo)
+    if kind == "worktree":
+        print(f"🌿 workspace = worktree {wd}")
+    verifier = _build_verifier(mem, goal, dod, tests_src, wd)
+    ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
+    t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
+    res = run_loop(t, human_door=make_suspend_door(mem, thread, goal, dod),
+                   notify=print, project_context=ctx, memory=mem,
+                   thread_id=str(thread), workspace=wd)
+    if res.get("ok") and mem.door_get(thread):
+        print("AWAITING_APPROVAL")
+        print("ARTIFACT:")
+        print(_mask((res.get("artifact") or "")[:2500]))
+        print("ARTIFACT_END")
+        return 0
+    if res.get("ok"):                                           # phòng hờ: ok mà không door
+        print("DONE")
+        return 0
+    print(f"FAILED: {res.get('reason')}")
+    return 1
+
+
+def cmd_resolve(thread: str, decision: bool) -> int:
+    mem = _mem()
+    door = mem.door_get(thread) if mem else None
+    if not door:
+        print("STALE: không có door đang mở cho thread này")
+        return 1
+    mem.audit(thread, approver="cli-human", decision=decision)  # người đã gõ duyệt ở session
+    finish_suspended(mem, thread, door, decision, print)
+    mem.door_close(thread)
+    print("APPROVED" if decision else "REJECTED")
+    return 0
+
+
+def cmd_show(thread: str) -> int:
+    mem = _mem()
+    run = mem.get_run(thread) if mem else {}
+    if not run:
+        print("STALE: không có run cho thread này")
+        return 1
+    door = mem.door_get(thread)
+    print(f"STATUS: {'awaiting_approval' if door else run.get('status', '?')}")
+    if door:
+        print("ARTIFACT:")
+        print(_mask((door.get("artifact") or "")[:2500]))
+        print("ARTIFACT_END")
+    elif run.get("draft"):
+        print("DRAFT:")
+        print(_mask(run["draft"][:2500]))
+        print("DRAFT_END")
+    return 0
+
+
 def cmd_status() -> int:
     reg = Memory(config.MEMORY_DIR).runs()
     if not reg:
@@ -139,12 +266,36 @@ def main(argv=None) -> int:
                                  description="loop framework — gated, reviewed agent runs")
     ap.add_argument("--version", action="version", version=f"loopkit {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("run", help="chạy một ticket đầy đủ").add_argument("ticket")
-    sub.add_parser("idea", help="refinement Q&A từ ý tưởng thô").add_argument("idea")
+    sub.add_parser("run", help="chạy một ticket đầy đủ (door tương tác)").add_argument("ticket")
+    p_idea = sub.add_parser("idea", help="refinement: '<ý tưởng>' (tương tác) | start/answer (agent)")
+    p_idea.add_argument("args", nargs="+")
+    p_ticket = sub.add_parser("ticket", help="agent-mode: ticket run <thread>")
+    p_ticket.add_argument("args", nargs=2)                      # ("run", thread)
+    for name in ("approve", "reject", "show"):
+        sub.add_parser(name).add_argument("thread")
     sub.add_parser("status", help="registry của repo hiện tại (cwd)")
     args = ap.parse_args(argv)
     if args.cmd == "run":
         return cmd_run(args.ticket)
     if args.cmd == "idea":
-        return cmd_idea(args.idea)
+        a = args.args
+        if a[0] == "start" and len(a) == 2:
+            return cmd_idea_start(a[1])
+        if a[0] == "answer" and len(a) == 3:
+            return cmd_idea_answer(a[1], a[2])
+        if len(a) == 1:
+            return cmd_idea(a[0])                               # tương tác như cũ
+        print("FAILED: dùng: idea '<ý tưởng>' | idea start '<ý tưởng>' | idea answer <thread> '<trả lời>'")
+        return 1
+    if args.cmd == "ticket":
+        if args.args[0] == "run":
+            return cmd_ticket_run(args.args[1])
+        print("FAILED: dùng: ticket run <thread>")
+        return 1
+    if args.cmd == "approve":
+        return cmd_resolve(args.thread, True)
+    if args.cmd == "reject":
+        return cmd_resolve(args.thread, False)
+    if args.cmd == "show":
+        return cmd_show(args.thread)
     return cmd_status()
