@@ -30,7 +30,7 @@ def ask_claude(prompt: str, soul: str, model: Optional[str] = None) -> str:
     cmd = ["claude", "-p", f"{soul}\n\n{prompt}"]
     if model:
         cmd += ["--model", model]
-    r = subprocess.run(cmd, capture_output=True, text=True,
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                        timeout=config.CLAUDE_TIMEOUT, cwd=str(wd))
     return (r.stdout or r.stderr).strip()
 
@@ -42,7 +42,7 @@ def run_agent(prompt: str, soul: str, *, workdir, tools, model: Optional[str] = 
     cmd = ["claude", "-p", f"{soul}\n\n{prompt}", "--allowedTools", ",".join(tools)]
     if model:
         cmd += ["--model", model]
-    r = subprocess.run(cmd, capture_output=True, text=True,
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                        timeout=config.AGENT_TIMEOUT, cwd=str(workdir))
     return (r.stdout or r.stderr).strip()
 

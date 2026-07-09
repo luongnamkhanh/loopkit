@@ -56,3 +56,19 @@ def test_finish_suspended_reject_no_cache_no_artifact(tmp_path):
     assert run["status"] == "done" and run["approved"] is False
     assert mem.recall("g", "d") is None                     # NEVER cache a rejected artifact
     assert not any("X=1" in m for m in msgs)                # and never deliver it
+
+
+def test_brain_calls_never_inherit_stdin(monkeypatch):
+    """CLI bug found live: claude subprocess ate the piped door answer -> door hit EOF.
+    Brain subprocesses must run with stdin=DEVNULL."""
+    import subprocess as sp
+    seen = {}
+    def fake_run(cmd, **kw):
+        seen["stdin"] = kw.get("stdin")
+        class R: stdout, stderr = "ok", ""
+        return R()
+    monkeypatch.setattr(engine.subprocess, "run", fake_run)
+    engine.ask_claude("p", "s")
+    assert seen["stdin"] == sp.DEVNULL
+    engine.run_agent("p", "s", workdir="/tmp", tools=("Read",))
+    assert seen["stdin"] == sp.DEVNULL
