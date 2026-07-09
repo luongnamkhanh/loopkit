@@ -27,7 +27,7 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Item | Status | Note |
 |---|---|---|
 | Starter gates (pytest / py_compile / structural) | ✅ | examples + `slack_app.py` |
-| REAL gate: EARS → pytest | ✅ | `gates.py`: explicit `Tests:` (AST-validated) > derived-from-DoD (fresh call BEFORE generation, frozen) > compile-only fallback (warned). helm/kubeconform variants ⬜ (domain) |
+| REAL gate: EARS → pytest | ✅ | `gates.py`: explicit `Tests:` (AST-validated) > derived-from-DoD (fresh call BEFORE generation, frozen) > compile-only fallback (warned). helm/kubeconform variants ⬜ (domain) — **real demand 2026-07-09**: ticket savepoint-upgradeMode (mất data khi upgrade) vào repo pending-gate, phải fix TAY (gate tay = `helm template` diff before/after + lint); đủ bằng chứng để build domain gate + diff artifact |
 | §8.3 calibration (gold set TPR/TNR), trajectory, pass^k | ⬜ | needs real-run data (scaffold possible) |
 | §8.4 continuous eval / golden set | ⬜ | needs real failures |
 
