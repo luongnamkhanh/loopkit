@@ -41,9 +41,8 @@ if not (BOT_TOKEN and APP_TOKEN):
 HERE = pathlib.Path(__file__).parent
 WORKDIR = pathlib.Path("/tmp/loopkit_runs"); WORKDIR.mkdir(exist_ok=True)
 PROJECT_CTX = read_agents_md(str(HERE))
-# Repo+tool mode: the agent reads the TARGET repo's AGENTS.md natively from its worktree cwd;
-# injecting loopkit's own rules there would be the wrong repo's context.
-EFFECTIVE_CTX = "" if (config.TARGET_REPO and config.ENABLE_TOOLS) else PROJECT_CTX
+# Repo+tool mode: the agent reads the TICKET repo's AGENTS.md natively from its worktree cwd;
+# injecting loopkit's own rules there would be the wrong repo's context (per-ticket, in launch_ticket).
 MEM = Memory(config.MEMORY_DIR) if config.ENABLE_MEMORY else None
 _guard = shield.mask if config.ENABLE_SHIELD else (lambda s: s)
 app = App(token=BOT_TOKEN)
@@ -75,9 +74,21 @@ def make_door(thread_ts, client, channel, goal, dod):
 
 # ---- shared ticket launcher (used by mention intake AND thread follow-ups) ----
 def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
+    repo_name, text = gates.parse_repo(text)
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         return False
+    if repo_name and repo_name not in config.REPOS:            # fail-closed: allowlist quyết
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text=f"🙅 Repo `{repo_name}` không có trong allowlist. "
+                 f"Hợp lệ: {', '.join(sorted(config.REPOS)) or '(trống)'}")
+        return True                                            # đã xử lý — không rơi vào refinement
+    if repo_name in config.REPOS_PENDING:
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text=f"⏳ Repo `{repo_name}` đã đăng ký nhưng CHƯA có gate phù hợp "
+                 "(terraform/helm) — chờ domain gate.")
+        return True
+    repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
     client.chat_postMessage(channel=channel, thread_ts=thread,
         text=_guard(f"🧩 Nhận ticket.\n*Goal:* {goal}\n*DoD:* {dod}"))
     if tests_src is None and re.search(r"(?i)\btests:", text):
@@ -92,7 +103,8 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
 
     def work():
         try:
-            wd, kind = make_workspace(str(thread))   # isolated dir, or git worktree in repo mode
+            ws_key = f"{repo_name}-{thread}" if repo_name else str(thread)
+            wd, kind = make_workspace(ws_key, repo=repo_path)   # isolated dir, or git worktree
             if kind == "worktree":
                 notify(f"🌿 workspace = git worktree `{wd}` (branch loop/…)")
             # Live finding: check recall BEFORE deriving — a recalled ticket was burning an
@@ -113,7 +125,9 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
                            "Cân nhắc gửi lại kèm `Tests:`.")
             t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
             res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod),
-                           notify=notify, project_context=EFFECTIVE_CTX,
+                           notify=notify,
+                           project_context=("" if (repo_path and config.ENABLE_TOOLS)
+                                            else PROJECT_CTX),
                            journal_dir=str(WORKDIR), memory=MEM, thread_id=str(thread),
                            workspace=wd)
             if res.get("ok"):
@@ -153,8 +167,10 @@ def _refine_step(client, channel, thread):
         history = [{"role": e["role"], "text": e["text"]}
                    for e in MEM.events(str(thread)) if e.get("stage") == "refine"]
         turns = run.get("refine_turns", 0)
+        repos_info = ({"active": sorted(n for n in config.REPOS if n not in config.REPOS_PENDING),
+                       "pending": sorted(config.REPOS_PENDING)} if config.REPOS else None)
         kind, text = refine.refine_turn(run.get("idea", ""), history, turns,
-                                        config.REFINE_MAX_TURNS)
+                                        config.REFINE_MAX_TURNS, repos=repos_info)
         if kind == "error":
             client.chat_postMessage(channel=channel, thread_ts=thread,
                                     text="💥 refinement lỗi — reply để thử lại.")
