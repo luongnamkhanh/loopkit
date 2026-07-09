@@ -121,3 +121,10 @@ def test_reaper_leaves_awaiting_approval(tmp_path):
     mem.register("suspended", status="awaiting_approval")
     assert mem.reap_running() == []
     assert mem.get_run("suspended")["status"] == "awaiting_approval"
+
+
+def test_runs_returns_full_registry(tmp_path):
+    mem = Memory(str(tmp_path / "m"))
+    mem.register("a", status="done")
+    mem.register("b", status="refining")
+    assert set(mem.runs()) == {"a", "b"}

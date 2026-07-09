@@ -52,6 +52,9 @@ class Memory:
     def get_run(self, thread_id: str) -> dict:
         return self._load(self.reg_path).get(thread_id, {})
 
+    def runs(self) -> dict:
+        return self._load(self.reg_path)
+
     def reap_running(self) -> list:
         """§8.1 first brick — startup reconcile: single-process bot, so any 'running' entry
         at boot is a dead run (process died mid-loop). Flip to 'interrupted', keep evidence."""
