@@ -72,3 +72,33 @@ def test_empty_reply_retries_once_then_error():
         return ""
     kind, _ = refine.refine_turn("idea", [], 0, 5, ask=fake)
     assert kind == "error" and len(calls) == 2
+
+
+def test_repos_listed_in_prompt():
+    seen = {}
+    def fake(p, s, model=None):
+        seen["p"] = p
+        return "QUESTION: repo nào?"
+    refine.refine_turn("idea", [], 0, 5,
+                       repos={"active": ["pipeline", "loopkit"], "pending": ["iac"]}, ask=fake)
+    assert "pipeline" in seen["p"] and "iac" in seen["p"]
+
+
+def test_draft_with_unknown_repo_retries_then_ok():
+    calls = []
+    def fake(p, s, model=None):
+        calls.append(p)
+        if len(calls) == 1:
+            return "TICKET: Repo: sai-ten " + VALID_TICKET
+        return "TICKET: Repo: pipeline " + VALID_TICKET
+    kind, text = refine.refine_turn("idea", [], 0, 5,
+                                    repos={"active": ["pipeline"], "pending": []}, ask=fake)
+    assert kind == "draft" and len(calls) == 2                 # 1 lần fail gate vì tên sai
+    assert gates.parse_repo(text)[0] == "pipeline"
+
+
+def test_draft_without_repo_still_valid():
+    kind, _ = refine.refine_turn("idea", [], 0, 5,
+                                 repos={"active": ["pipeline"], "pending": []},
+                                 ask=lambda p, s, model=None: "TICKET: " + VALID_TICKET)
+    assert kind == "draft"                                     # không Repo: -> TARGET_REPO default

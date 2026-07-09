@@ -29,19 +29,29 @@ def _parse_reply(reply: str):
     return kind, text[i + len(marker):].strip()
 
 
-def _valid_draft(draft: str) -> bool:
-    goal, dod, tests = gates.parse_ticket(draft)
+def _valid_draft(draft: str, repos=None) -> bool:
+    name, rest = gates.parse_repo(draft)
+    if repos is not None and name is not None and name not in repos.get("active", []):
+        return False                                  # tên ngoài allowlist = fail gate
+    goal, dod, tests = gates.parse_ticket(rest)
     return bool(goal and dod and tests)
 
 
-def refine_turn(idea, history, turns_used, max_turns, ask=ask_claude):
+def refine_turn(idea, history, turns_used, max_turns, repos=None, ask=ask_claude):
     """Một lượt analyst. history = [{'role': 'analyst'|'user', 'text': ...}, ...].
+    repos = {'active': [...], 'pending': [...]} | None (None -> không nhắc repo).
     -> ('ask', q) | ('draft', ticket) | ('draft_unvalidated', ticket) | ('error', '')."""
     soul = roles.REGISTRY["analyst"].soul
     model = config.ROLE_MODELS.get("analyst")
     convo = "\n".join(f"{h['role']}: {h['text']}" for h in history)
     forced = turns_used >= max_turns
-    prompt = (f"RAW IDEA:\n{idea}\n\nCONVERSATION SO FAR:\n{convo or '(none)'}\n\n"
+    repo_ctx = ""
+    if repos:
+        repo_ctx = ("\nAVAILABLE REPOS — the ticket SHOULD include 'Repo: <name>':\n"
+                    f"  active: {', '.join(repos.get('active', [])) or '(none)'}\n"
+                    f"  pending (registered, NOT usable yet — never pick these): "
+                    f"{', '.join(repos.get('pending', [])) or '(none)'}\n")
+    prompt = (f"RAW IDEA:\n{idea}\n\nCONVERSATION SO FAR:\n{convo or '(none)'}\n{repo_ctx}\n"
               + ("QUESTION BUDGET EXHAUSTED: output the TICKET now; state assumptions in the goal."
                  if forced else f"Questions used: {turns_used}/{max_turns}."))
     reply = ask(prompt, soul, model=model)
@@ -58,11 +68,12 @@ def refine_turn(idea, history, turns_used, max_turns, ask=ask_claude):
         if kind == "ask":
             return "draft_unvalidated", text          # ponytail: đưa human cái đang có
     for _ in range(2):                                # gate deterministic + bounded retry
-        if _valid_draft(text):
+        if _valid_draft(text, repos):
             return "draft", text
         _, text = _parse_reply(ask(
             f"{prompt}\n\nYour draft FAILED the format gate. Required: '<goal> DoD: <EARS "
             f"criteria> Tests: ```python ...```' — tests import from `solution`, define test_* "
-            f"functions. Output the corrected TICKET.\n\nPREVIOUS DRAFT:\n{text}",
+            f"functions; if a 'Repo:' name is present it MUST be one of the active repos. "
+            f"Output the corrected TICKET.\n\nPREVIOUS DRAFT:\n{text}",
             soul, model=model))
-    return ("draft", text) if _valid_draft(text) else ("draft_unvalidated", text)
+    return ("draft", text) if _valid_draft(text, repos) else ("draft_unvalidated", text)
