@@ -86,7 +86,7 @@ design; add when real runs demand them.
 | Item | Status | Note |
 |---|---|---|
 | src-layout package + pyproject | ✅ | hatchling; core deps RỖNG; extras `loopkit[slack]`; entry-points plugin reserved (P3); install từ git URL verify bằng venv sạch |
-| CLI front `loopkit run\|idea\|status` | ✅ | cwd = repo đích (worktree per ticket); door terminal y/N fail-closed; `Repo:` bị strip + warning (allowlist là chuyện front slack); live finding: brain subprocess phải `stdin=DEVNULL` (từng nuốt câu trả lời door qua pipe) |
+| CLI front `loopkit run\|idea\|status` | ✅ | cwd = repo đích (worktree per ticket); door terminal y/N fail-closed; `Repo:` bị strip + warning (allowlist là chuyện front slack); live findings: brain subprocess phải `stdin=DEVNULL` (từng nuốt câu trả lời door qua pipe); idea-mode Enter rỗng đốt lượt analyst — polish: re-prompt tại chỗ khi input rỗng (⬜ nhỏ) |
 | Slack front = `loopkit-slack` | ✅ | behavior không đổi; AGENTS.md đọc từ cwd; chạy `python -m loopkit.fronts.slack` |
 | `.loopkit.*` per-repo config (cascade kiểu aider) | ⬜ | P2 |
 | Roles-as-data + MCP + recipes | ⬜ | P3 (CrewAI/Goose patterns đã research) |
