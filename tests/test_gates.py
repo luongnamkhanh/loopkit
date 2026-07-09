@@ -83,3 +83,19 @@ def test_compile_gate_rejects_empty_artifact(tmp_path):
     assert ok is False and "empty" in detail
     ok2, _ = v("x = 1\n")
     assert ok2 is True
+
+
+def test_parse_repo_extracts_and_strips():
+    name, rest = gates.parse_repo("Repo: iac tạo repo mới DoD: WHEN x SHALL y")
+    assert name == "iac" and rest == "tạo repo mới DoD: WHEN x SHALL y"
+
+
+def test_parse_repo_case_insensitive_and_hyphen():
+    name, rest = gates.parse_repo("làm X repo: data-deploy DoD: y")
+    assert name == "data-deploy" and "repo:" not in rest.lower()
+    assert rest == "làm X DoD: y"
+
+
+def test_parse_repo_absent():
+    name, rest = gates.parse_repo("làm X DoD: y")
+    assert name is None and rest == "làm X DoD: y"

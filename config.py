@@ -48,6 +48,20 @@ ENABLE_TOOLS = _env_bool("ENABLE_TOOLS", False)   # off by default: text mode = 
 AGENT_TIMEOUT = _env_int("AGENT_TIMEOUT", 600)    # tool sessions run much longer than one-shot
 TARGET_REPO = _env_str("TARGET_REPO", "")         # git repo for worktree workspaces ("" = standalone)
 
+
+# --- multi-repo allowlist (Repo: routing) ---
+def _parse_repos(raw: str) -> dict:
+    out = {}
+    for entry in (raw or "").split(";"):
+        name, sep, path = entry.strip().partition("=")
+        if sep and name.strip() and path.strip():
+            out[name.strip()] = path.strip()
+    return out
+
+
+REPOS = _parse_repos(_env_str("REPOS", ""))                    # name -> repo path
+REPOS_PENDING = {s.strip() for s in _env_str("REPOS_PENDING", "").split(",") if s.strip()}
+
 # --- idea refinement (intake stage) ---
 REFINE_MAX_TURNS = _env_int("REFINE_MAX_TURNS", 5)   # trần câu hỏi trước khi BUỘC draft
 

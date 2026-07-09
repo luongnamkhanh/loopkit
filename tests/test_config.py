@@ -40,3 +40,16 @@ def test_bad_int_falls_back_to_default(monkeypatch):
     assert config.MAX_TURNS == 4
     monkeypatch.delenv("LOOPKIT_MAX_TURNS")
     importlib.reload(config)
+
+
+def test_repos_allowlist_parsing(monkeypatch):
+    import importlib
+    monkeypatch.setenv("LOOPKIT_REPOS", "pipeline=/a/b; iac=/c ;;bad;=x;x=")
+    monkeypatch.setenv("LOOPKIT_REPOS_PENDING", "iac, ,deploy")
+    importlib.reload(config)
+    assert config.REPOS == {"pipeline": "/a/b", "iac": "/c"}   # entry hỏng bị bỏ qua
+    assert config.REPOS_PENDING == {"iac", "deploy"}
+    monkeypatch.delenv("LOOPKIT_REPOS")
+    monkeypatch.delenv("LOOPKIT_REPOS_PENDING")
+    importlib.reload(config)
+    assert config.REPOS == {} and config.REPOS_PENDING == set()
