@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loopkit"
+version = "0.1.0"
+description = "Loop framework: gated, reviewed, human-approved agent runs — CLI and Slack fronts"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+slack = ["slack-bolt>=1.18", "slack-sdk>=3.26"]
+
+[project.scripts]
+loopkit = "loopkit.fronts.cli:main"
+loopkit-slack = "loopkit.fronts.slack:main"
+
+# reserved cho P3 (plugin gate/role bên thứ ba, pattern pytest):
+# [project.entry-points."loopkit.plugins"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopkit"]

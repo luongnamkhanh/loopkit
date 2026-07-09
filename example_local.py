@@ -4,7 +4,8 @@ Run:  python3 example_local.py
 (Replace `verifier`, `human_door`, and the souls to point loopkit at your real project.)
 """
 import pathlib, subprocess
-from engine import Ticket, run_loop
+import sys; sys.path.insert(0, "src")
+from loopkit.engine import Ticket, run_loop
 
 HERE = pathlib.Path(__file__).parent
 TESTS = '''

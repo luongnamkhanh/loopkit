@@ -1,7 +1,7 @@
 """Regression tests from live operation: reviewer-verdict parsing (fail-closed but tolerant)."""
-import config, engine, roles
-from memory import Memory
-from engine import Ticket, run_loop
+from loopkit import config, engine, roles
+from loopkit.memory import Memory
+from loopkit.engine import Ticket, run_loop
 
 
 def make_fake(reviewer_reply):

@@ -9,4 +9,4 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 source "$ENV_FILE"
 cd "$(dirname "$0")"
-exec python slack_app.py
+PYTHONPATH="$(dirname "$0")/src" exec python -m loopkit.fronts.slack

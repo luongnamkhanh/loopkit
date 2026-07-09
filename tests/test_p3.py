@@ -1,8 +1,8 @@
 """P3 verifiers — tool execution, model tiering, worktree isolation, registry artifact."""
 import json, pathlib, subprocess
-import config, engine, roles, workspace
-from engine import Ticket, run_loop
-from memory import Memory
+from loopkit import config, engine, roles, workspace
+from loopkit.engine import Ticket, run_loop
+from loopkit.memory import Memory
 
 
 # ---------- fakes ----------

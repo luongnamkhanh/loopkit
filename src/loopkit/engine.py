@@ -16,9 +16,9 @@ Seams for a real project: Ticket.verifier, human_door, the roles registry, AGENT
 import subprocess, re, json, pathlib, time, itertools
 from dataclasses import dataclass
 from typing import Callable, Optional
-import config, shield
-from memory import Memory
-from roles import REGISTRY, allowed_tools
+from loopkit import config, shield
+from loopkit.memory import Memory
+from loopkit.roles import REGISTRY, allowed_tools
 
 # ---------- brain ----------
 def ask_claude(prompt: str, soul: str, model: Optional[str] = None) -> str:

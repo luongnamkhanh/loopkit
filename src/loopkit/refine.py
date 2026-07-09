@@ -12,8 +12,8 @@ Một instance loop framework đúng nghĩa:
 Protocol fail-closed (bài học vụ VERDICT bị chôn): thiếu marker QUESTION:/TICKET: -> coi là
 question, KHÔNG BAO GIỜ tự thành draft.
 """
-import config, gates, roles
-from engine import ask_claude
+from loopkit import config, gates, roles
+from loopkit.engine import ask_claude
 
 
 def _parse_reply(reply: str):

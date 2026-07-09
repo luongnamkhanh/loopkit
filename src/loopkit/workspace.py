@@ -9,8 +9,8 @@ loop/<thread>, so parallel tickets can edit the same repository without clobberi
 """
 import hashlib, pathlib, subprocess
 from typing import Optional
-import config
-from memory import _safe
+from loopkit import config
+from loopkit.memory import _safe
 
 RUNS_BASE = pathlib.Path("/tmp/loopkit_runs")
 WT_BASE = pathlib.Path("/tmp/loopkit_worktrees")

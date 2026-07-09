@@ -1,5 +1,5 @@
 """T4 verifier — gates.py DoD made runnable."""
-import gates
+from loopkit import gates
 
 TESTS = "from solution import add\n\ndef test_add():\n    assert add(1, 2) == 3\n"
 

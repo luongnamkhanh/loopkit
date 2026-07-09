@@ -3,9 +3,9 @@ The brain (engine.ask_claude) is monkeypatched: these tests verify the LOOP+MEMO
 not the LLM.
 """
 import json
-import engine, roles
-from engine import Ticket, run_loop
-from memory import Memory
+from loopkit import engine, roles
+from loopkit.engine import Ticket, run_loop
+from loopkit.memory import Memory
 
 
 def make_fake(counter):

@@ -1,6 +1,6 @@
 """T1 verifier — config.py DoD made runnable."""
 import importlib
-import config
+from loopkit import config
 
 
 def test_defaults():

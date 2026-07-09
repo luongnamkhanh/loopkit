@@ -1,6 +1,6 @@
 """Idea-refinement verifiers — refine_turn là một vòng loop framework thu nhỏ."""
 import importlib
-import config, gates, refine
+from loopkit import config, gates, refine
 
 
 VALID_TICKET = ('viết hàm foo(x) DoD: WHEN 1 SHALL return 2 Tests: ```python\n'
@@ -11,7 +11,7 @@ def test_config_and_role_defaults():
     importlib.reload(config)
     assert config.REFINE_MAX_TURNS == 5
     assert config.ROLE_MODELS["analyst"] == "sonnet"
-    import roles
+    from loopkit import roles
     assert roles.REGISTRY["analyst"].tools == ()        # analyst không có tool
 
 

@@ -21,26 +21,28 @@ Human door blocks on threading.Event; doors also persist to disk (§8.1), so a c
 after a restart resumes and completes the run via engine.finish_suspended.
 """
 import os, pathlib, re, threading
-from slack_bolt import App
+try:
+    from slack_bolt import App
+except ImportError as e:                             # core không kéo Slack deps
+    raise SystemExit("Slack front cần extras: pip install 'loopkit[slack]'") from e
 try:                                             # websocket-client transport: much stabler than the
     from slack_bolt.adapter.socket_mode.websocket_client import SocketModeHandler  # builtin on flaky
     _ADAPTER = "websocket_client"                # nets/VPN (fixes repeated BrokenPipe on sock check)
 except ImportError:                              # pip install websocket-client  to enable
     from slack_bolt.adapter.socket_mode import SocketModeHandler
     _ADAPTER = "builtin"
-import config, gates, refine, shield
-from engine import Ticket, run_loop, read_agents_md, finish_suspended
-from memory import Memory
-from workspace import make_workspace
+from loopkit import config, gates, refine, shield
+from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
+from loopkit.memory import Memory
+from loopkit.workspace import make_workspace
 
 BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 if not (BOT_TOKEN and APP_TOKEN):
     raise SystemExit("Set SLACK_BOT_TOKEN (xoxb-) and SLACK_APP_TOKEN (xapp-) in your environment.")
 
-HERE = pathlib.Path(__file__).parent
 WORKDIR = pathlib.Path("/tmp/loopkit_runs"); WORKDIR.mkdir(exist_ok=True)
-PROJECT_CTX = read_agents_md(str(HERE))
+PROJECT_CTX = read_agents_md(".")        # bot chạy với cwd = repo root (run.sh cd sẵn)
 # Repo+tool mode: the agent reads the TICKET repo's AGENTS.md natively from its worktree cwd;
 # injecting loopkit's own rules there would be the wrong repo's context (per-ticket, in launch_ticket).
 MEM = Memory(config.MEMORY_DIR) if config.ENABLE_MEMORY else None
@@ -294,7 +296,7 @@ def _ticket_reject(ack, body):
         if ch:
             app.client.chat_postMessage(channel=ch, thread_ts=ts, text="🚫 Draft đã hủy.")
 
-if __name__ == "__main__":
+def main() -> None:
     if MEM:
         dead = MEM.reap_running()                    # a 'running' entry at boot is a dead run
         if dead:
@@ -305,3 +307,7 @@ if __name__ == "__main__":
         mode += f", repo={config.TARGET_REPO}"
     print(f"loopkit Slack bot starting (Socket Mode, {mode})…")
     SocketModeHandler(app, APP_TOKEN).start()
+
+
+if __name__ == "__main__":
+    main()

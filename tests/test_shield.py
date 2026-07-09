@@ -1,5 +1,5 @@
 """T3 verifier — shield.py DoD made runnable."""
-import shield
+from loopkit import shield
 from collections import OrderedDict
 
 

@@ -5,7 +5,8 @@ INFRA ticket -> infra agent (manifest gate). Reviewer is the shared evaluator.
 Run:  python3 example_multiagent.py
 """
 import pathlib, subprocess, re
-from engine import Ticket, run_loop
+import sys; sys.path.insert(0, "src")
+from loopkit.engine import Ticket, run_loop
 
 HERE = pathlib.Path(__file__).parent
 

@@ -12,8 +12,8 @@ The gate writes each artifact to `solution.py` and runs pytest against the froze
 differently, the gate fails with an ImportError and the feedback loop corrects it.
 """
 import ast, pathlib, re, subprocess
-import config
-from engine import ask_claude, extract_code
+from loopkit import config
+from loopkit.engine import ask_claude, extract_code
 
 
 def _looks_like_tests(src: str) -> bool:
