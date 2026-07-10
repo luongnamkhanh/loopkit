@@ -129,6 +129,32 @@ def ensure_workspace(thread_id: str, repo: str, artifact: str,
     return str(p)
 
 
+def freeze_deliver(deliver_path, goal, repo, emit=print):
+    """Chốt Deliver: lúc freeze — helper chung cho mọi front (CLI print / Slack notify).
+    Token có sẵn > infer > degraded (None + warning). Guard false (không repo-mode hoặc
+    DELIVER=0) -> LUÔN None: door không bao giờ hứa một delivery sẽ không xảy ra."""
+    if not (repo and config.DELIVER):
+        if deliver_path:
+            emit(f"⚠️ Deliver: {deliver_path} bị bỏ qua (không repo-mode hoặc LOOPKIT_DELIVER=0).")
+        return None
+    if deliver_path is None:
+        deliver_path = infer_path(goal, repo)
+        if deliver_path:
+            exists = (pathlib.Path(repo) / deliver_path).exists()
+            emit(f"📦 Deliver: {deliver_path} (AI đề xuất)"
+                 + (" (overwrites existing)" if exists else ""))
+        else:
+            emit("⚠️ Không chốt được Deliver: — sẽ KHÔNG auto-deliver "
+                 "(artifact nằm ở worktree).")
+        return deliver_path
+    if not validate_path(deliver_path, repo):
+        emit(f"⚠️ Deliver: {deliver_path} không hợp lệ — sẽ KHÔNG auto-deliver.")
+        return None
+    exists = (pathlib.Path(repo) / deliver_path).exists()
+    emit(f"📦 Deliver: {deliver_path}" + (" (overwrites existing)" if exists else ""))
+    return deliver_path
+
+
 def ship(workspace: str, repo: str, deliver_path: str, goal: str, dod: str,
          emit=print, record=lambda e: None) -> dict:
     """Chuỗi giao hàng sau approve. Mỗi bước fail -> emit + journal + DỪNG, không rollback."""

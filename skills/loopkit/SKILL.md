@@ -42,6 +42,8 @@ dòng. Exit 0 = bước thành công (kể cả AWAITING_APPROVAL); 1 = FAILED/S
 
 ## Sau approve
 
-Artifact nằm ở worktree branch `loop/<thread>` của repo — nhắc người dùng bước giao hàng
-(move file theo convention repo, commit, push, MR) vẫn là bước tay cho tới khi MR-delivery
-được build.
+Nếu ticket có `Deliver:` (path đã chốt ở Bước 7), sau approve loopkit TỰ move file → commit →
+push → tạo MR và in link — relay link đó cho người dùng, không cần họ tự tay làm gì thêm.
+Chỉ khi ticket KHÔNG có `Deliver:` (hoặc bước delivery tự động fail — loopkit sẽ báo rõ)
+thì artifact còn nằm ở worktree branch `loop/<thread>` và bước giao hàng (move file theo
+convention repo, commit, push, MR) mới còn là bước tay.

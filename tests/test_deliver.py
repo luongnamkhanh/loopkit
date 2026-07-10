@@ -431,3 +431,17 @@ def test_suspend_door_payload_carries_delivery(tmp_path):
     assert door("ART") is False
     assert (opened["deliver"], opened["repo"], opened["workspace"], opened["tests"]) == \
            ("pkg/x.py", "/r", "/w", "T")
+
+
+def test_freeze_deliver_guard_false_drops_explicit_token():
+    msgs = []
+    assert deliver.freeze_deliver("pkg/x.py", "g", "", emit=msgs.append) is None
+    assert any("bỏ qua" in m for m in msgs)     # token tường minh không rơi im lặng
+
+
+def test_freeze_deliver_overwrite_warning(tmp_path):
+    repo, _, _ = make_repo_with_ws(tmp_path)
+    msgs = []
+    got = deliver.freeze_deliver("pkg/__init__.py", "g", str(repo), emit=msgs.append)
+    assert got == "pkg/__init__.py"
+    assert any("overwrites existing" in m for m in msgs)

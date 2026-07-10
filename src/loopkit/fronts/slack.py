@@ -132,19 +132,7 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
                     frozen_tests = ""
                     notify("⚠️ Không derive được test từ DoD — gate = compile-only (YẾU). "
                            "Cân nhắc gửi lại kèm `Tests:`.")
-            dpath = deliver_path
-            if repo_path and config.DELIVER:
-                if dpath is None:
-                    dpath = deliver.infer_path(goal, repo_path)
-                    if dpath:
-                        notify(f"📦 Deliver: `{dpath}` (AI đề xuất)")
-                    else:
-                        notify("⚠️ Không chốt được Deliver: — sẽ KHÔNG auto-deliver.")
-                elif not deliver.validate_path(dpath, repo_path):
-                    notify(f"⚠️ Deliver: `{dpath}` không hợp lệ — sẽ KHÔNG auto-deliver.")
-                    dpath = None
-                else:
-                    notify(f"📦 Deliver: `{dpath}`")
+            dpath = deliver.freeze_deliver(deliver_path, goal, repo_path or "", emit=notify)
             t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
                        deliver=dpath, repo=repo_path or "", tests_src=frozen_tests)
             res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod,

@@ -3,7 +3,7 @@
 Cùng một engine với front Slack; khác biệt duy nhất: door là prompt terminal và
 workspace lấy từ cwd (git repo -> worktree per ticket; không phải git -> tmp dir).
 """
-import argparse, pathlib, subprocess, time
+import argparse, subprocess, time
 
 from loopkit import __version__, config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
@@ -51,28 +51,6 @@ def _build_verifier(mem, goal, dod, tests_src, wd):
     return gates.make_compile_gate(wd), ""
 
 
-def _freeze_deliver(deliver_path, goal, repo):
-    """Chốt Deliver: lúc freeze. Token có sẵn > infer > degraded (None + warning)."""
-    if not (repo and config.DELIVER):
-        return None
-    if deliver_path is None:
-        deliver_path = deliver.infer_path(goal, repo)
-        if deliver_path:
-            exists = (pathlib.Path(repo) / deliver_path).exists()
-            print(f"📦 Deliver: {deliver_path} (AI đề xuất)"
-                  + (" (overwrites existing)" if exists else ""))
-        else:
-            print("⚠️ Không chốt được Deliver: — sẽ KHÔNG auto-deliver "
-                  "(artifact nằm ở worktree).")
-        return deliver_path
-    if not deliver.validate_path(deliver_path, repo):
-        print(f"⚠️ Deliver: {deliver_path} không hợp lệ — sẽ KHÔNG auto-deliver.")
-        return None
-    exists = (pathlib.Path(repo) / deliver_path).exists()
-    print(f"📦 Deliver: {deliver_path}" + (" (overwrites existing)" if exists else ""))
-    return deliver_path
-
-
 def cmd_run(text: str, thread=None) -> int:
     repo_name, text = gates.parse_repo(text)
     if repo_name:
@@ -89,7 +67,7 @@ def cmd_run(text: str, thread=None) -> int:
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
     verifier, frozen_tests = _build_verifier(mem, goal, dod, tests_src, wd)
-    deliver_path = _freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
+    deliver_path = deliver.freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
     t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
                deliver=deliver_path, repo=repo, tests_src=frozen_tests)
@@ -231,7 +209,7 @@ def cmd_ticket_run(thread: str) -> int:
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
     verifier, frozen_tests = _build_verifier(mem, goal, dod, tests_src, wd)
-    deliver_path = _freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
+    deliver_path = deliver.freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
     t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
                deliver=deliver_path, repo=repo, tests_src=frozen_tests)
