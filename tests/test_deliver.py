@@ -85,3 +85,62 @@ def test_place_and_verify_rewrite_is_word_boundary(tmp_path):
     assert ok, detail
     tsrc = (ws / "pkg" / "test_adder.py").read_text()
     assert "resolution" in tsrc and "adder.resolution.value" in tsrc
+
+
+def make_repo_with_ws(tmp_path):
+    """Repo thật + bare origin + worktree có artifact xanh (mô phỏng sau approve)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "__init__.py").write_text("")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-qu", "origin", "main")
+    ws = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", str(ws), "-b", "loop/t1")
+    (ws / "solution.py").write_text("def add(a, b):\n    return a + b\n")
+    (ws / "test_ticket.py").write_text(
+        "from solution import add\n\ndef test_add():\n    assert add(1, 2) == 3\n")
+    return repo, bare, ws
+
+
+def test_ship_commits_and_pushes(tmp_path):
+    repo, bare, ws = make_repo_with_ws(tmp_path)
+    events = []
+    res = deliver.ship(str(ws), str(repo), "pkg/adder.py", "add two numbers",
+                       "WHEN ints SHALL sum", emit=events.append,
+                       record=lambda e: events.append(e))
+    assert res["ok"], res
+    assert res["branch"] == "feat/adder"
+    r = subprocess.run(["git", "-C", str(bare), "log", "--oneline", "feat/adder"],
+                       capture_output=True, text=True)
+    assert "add two numbers" in r.stdout          # commit lên remote, message từ goal
+
+
+def test_ship_push_fail_keeps_branch_and_reports(tmp_path):
+    repo, bare, ws = make_repo_with_ws(tmp_path)
+    hook = pathlib.Path(bare) / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'read-only group' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    msgs = []
+    res = deliver.ship(str(ws), str(repo), "pkg/adder.py", "add two numbers",
+                       "WHEN ints SHALL sum", emit=msgs.append)
+    assert not res["ok"] and res["error"] == "push"
+    assert res["branch"] == "feat/adder"
+    local = _git(repo, "log", "--oneline", "feat/adder")
+    assert "add two numbers" in local.stdout      # commit còn local
+    assert any("push FAIL" in m for m in msgs)    # báo rõ, có stderr
+
+
+def test_ship_aborts_on_regate_fail_no_commit(tmp_path):
+    repo, bare, ws = make_repo_with_ws(tmp_path)
+    (ws / "solution.py").write_text("def add(a, b):\n    return a - b\n")
+    res = deliver.ship(str(ws), str(repo), "pkg/adder.py", "add", "dod")
+    assert not res["ok"] and res["error"] == "regate"
+    assert _git(repo, "log", "--oneline", "feat/adder").returncode != 0  # branch không tồn tại

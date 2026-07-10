@@ -50,3 +50,44 @@ def place_and_verify(workspace: str, deliver_path: str):
     r = subprocess.run(["python3", "-m", "py_compile", str(dst)],
                        capture_output=True, text=True, timeout=60)
     return r.returncode == 0, (r.stderr.strip() or "compiles OK (không có test — gate yếu)")[-300:]
+
+
+def create_mr(workspace: str, branch: str, title: str, body: str,
+              push_output: str = "", remote_url: Optional[str] = None):
+    return None, "MR: chưa wire"          # Task 4 thay thân thật
+
+
+def ship(workspace: str, repo: str, deliver_path: str, goal: str, dod: str,
+         emit=print, record=lambda e: None) -> dict:
+    """Chuỗi giao hàng sau approve. Mỗi bước fail -> emit + journal + DỪNG, không rollback."""
+    ok, detail = place_and_verify(workspace, deliver_path)
+    record({"stage": "deliver_gate", "ok": ok, "detail": detail[:200]})
+    if not ok:
+        emit(f"🚫 deliver abort — re-gate FAIL sau move: {detail}")
+        return {"ok": False, "branch": None, "mr_url": None, "error": "regate"}
+    module = pathlib.Path(deliver_path).stem
+    branch = f"feat/{module.replace('_', '-')}"
+    test_rel = str(pathlib.PurePosixPath(deliver_path).parent / f"test_{module}.py")
+
+    def g(*args):
+        return subprocess.run(["git", "-C", workspace, *args],
+                              capture_output=True, text=True)
+
+    g("checkout", "-B", branch)                     # -B: revision re-run dùng lại branch
+    g("add", deliver_path, test_rel)
+    c = g("commit", "-m", goal.splitlines()[0][:72])
+    if c.returncode != 0:
+        emit(f"🚫 deliver abort — commit FAIL: {(c.stderr or c.stdout)[-300:]}")
+        record({"stage": "delivered", "error": "commit_failed"})
+        return {"ok": False, "branch": branch, "mr_url": None, "error": "commit"}
+    p = g("push", "-u", "origin", branch)
+    if p.returncode != 0:
+        emit(f"🚫 push FAIL: {(p.stderr or p.stdout)[-300:]}\n"
+             f"↳ branch `{branch}` còn LOCAL tại {workspace} — push lại khi remote hết lỗi.")
+        record({"stage": "delivered", "error": "push_failed", "branch": branch})
+        return {"ok": False, "branch": branch, "mr_url": None, "error": "push"}
+    url, note = create_mr(workspace, branch, goal.splitlines()[0][:72], dod,
+                          push_output=(p.stdout or "") + (p.stderr or ""))
+    emit(f"🚢 delivered: {url or branch} ({note})")
+    record({"stage": "delivered", "branch": branch, "mr_url": url})
+    return {"ok": True, "branch": branch, "mr_url": url, "error": None}
