@@ -31,7 +31,7 @@ try:                                             # websocket-client transport: m
 except ImportError:                              # pip install websocket-client  to enable
     from slack_bolt.adapter.socket_mode import SocketModeHandler
     _ADAPTER = "builtin"
-from loopkit import config, gates, refine, shield
+from loopkit import config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
 from loopkit.memory import Memory
 from loopkit.workspace import make_workspace
@@ -51,18 +51,20 @@ app = App(token=BOT_TOKEN)
 _pending = {}   # thread_ts -> {"event": threading.Event, "approved": bool}
 
 # ---- Slack human door: post artifact + Approve/Reject, block until a human clicks ----
-def make_door(thread_ts, client, channel, goal, dod):
+def make_door(thread_ts, client, channel, goal, dod, deliver="", repo="", ws="", tests=""):
     def door(artifact: str) -> bool:
         ev = threading.Event(); _pending[thread_ts] = {"event": ev, "approved": False}
         if MEM:                                  # §8.1: persist so a restart can resume it
             MEM.door_open(thread_ts, {"channel": channel, "artifact": artifact,
-                                      "goal": goal, "dod": dod})
+                                      "goal": goal, "dod": dod, "deliver": deliver,
+                                      "repo": repo, "workspace": ws, "tests": tests})
             MEM.register(thread_ts, status="awaiting_approval")
         preview = _guard((artifact or "")[:1500])    # never ask a blind approval
+        deliver_line = f"\n📦 Deliver: `{deliver}`" if deliver else ""
         client.chat_postMessage(channel=channel, thread_ts=thread_ts,
             text="Reviewer PASS — approve this change?",
             blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                     "text": f"Reviewer PASS — artifact chờ duyệt:\n```{preview}```"}},
+                     "text": f"Reviewer PASS — artifact chờ duyệt:{deliver_line}\n```{preview}```"}},
                     {"type": "actions", "elements": [
                 {"type": "button", "style": "primary", "action_id": "approve",
                  "text": {"type": "plain_text", "text": "Approve"}, "value": thread_ts},
@@ -77,6 +79,7 @@ def make_door(thread_ts, client, channel, goal, dod):
 # ---- shared ticket launcher (used by mention intake AND thread follow-ups) ----
 def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
     repo_name, text = gates.parse_repo(text)
+    deliver_path, text = gates.parse_deliver(text)
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         return False
@@ -113,20 +116,40 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
             # LLM call on tests that would never run (and posting a misleading 🧪 message).
             if MEM and MEM.recall(goal, dod) is not None:
                 verifier = gates.make_compile_gate(wd)   # unused: run_loop recalls before gating
+                frozen_tests = ""
             elif tests_src:
                 verifier = gates.make_pytest_gate(tests_src, wd)
+                frozen_tests = tests_src
                 notify("🧪 gate = pytest (tests from the ticket)")
             else:
                 derived = gates.derive_tests(goal, dod)      # fresh call, BEFORE generation; frozen
                 if derived:
                     verifier = gates.make_pytest_gate(derived, wd)
+                    frozen_tests = derived
                     notify(_guard(f"🧪 gate = pytest (derived from DoD, frozen):\n```\n{derived[:1200]}\n```"))
                 else:
                     verifier = gates.make_compile_gate(wd)
+                    frozen_tests = ""
                     notify("⚠️ Không derive được test từ DoD — gate = compile-only (YẾU). "
                            "Cân nhắc gửi lại kèm `Tests:`.")
-            t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
-            res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod),
+            dpath = deliver_path
+            if repo_path and config.DELIVER:
+                if dpath is None:
+                    dpath = deliver.infer_path(goal, repo_path)
+                    if dpath:
+                        notify(f"📦 Deliver: `{dpath}` (AI đề xuất)")
+                    else:
+                        notify("⚠️ Không chốt được Deliver: — sẽ KHÔNG auto-deliver.")
+                elif not deliver.validate_path(dpath, repo_path):
+                    notify(f"⚠️ Deliver: `{dpath}` không hợp lệ — sẽ KHÔNG auto-deliver.")
+                    dpath = None
+                else:
+                    notify(f"📦 Deliver: `{dpath}`")
+            t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
+                       deliver=dpath, repo=repo_path or "", tests_src=frozen_tests)
+            res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod,
+                                                   deliver=dpath or "", repo=repo_path or "",
+                                                   ws=wd, tests=frozen_tests),
                            notify=notify,
                            project_context=("" if (repo_path and config.ENABLE_TOOLS)
                                             else PROJECT_CTX),

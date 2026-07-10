@@ -69,3 +69,7 @@ and freezes them (the generator can never influence its own gate). If derivation
 falls back to compile-only and warns you.
 
 Constraints and repo conventions are pulled in automatically from `AGENTS.md` — you don't retype them.
+
+## Deliver (tuỳ chọn — thường để AI điền)
+`Deliver: <path/to/module.py>` — chỗ đặt file trong repo đích. Thiếu thì loopkit tự đề xuất
+lúc freeze (đọc cây repo); path hiện ở door — approve là duyệt cả chỗ đặt.

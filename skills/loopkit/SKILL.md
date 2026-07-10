@@ -29,6 +29,8 @@ không phải người duyệt.
 5. `DRAFT:`…`DRAFT_END` → áp Luật 2. (`DRAFT_UNVALIDATED:` = tests hỏng, nói rõ cho người dùng.)
 6. Người dùng OK → `loopkit ticket run <thread>` (chạy vài phút — gate, generate, review).
 7. `AWAITING_APPROVAL` + `ARTIFACT:` → đưa artifact cho người dùng, áp Luật 3.
+   - Door có dòng `DELIVER: <path>` → relay path đó cho người duyệt cùng artifact —
+     approve nghĩa là duyệt cả chỗ đặt file; sau approve loopkit tự commit/push/tạo MR.
 8. Duyệt tường minh → `loopkit approve <thread>`; từ chối → `loopkit reject <thread>`.
    Mất dấu → `loopkit show <thread>` / `loopkit status`.
 
