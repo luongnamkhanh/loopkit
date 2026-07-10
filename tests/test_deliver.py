@@ -445,3 +445,21 @@ def test_freeze_deliver_overwrite_warning(tmp_path):
     got = deliver.freeze_deliver("pkg/__init__.py", "g", str(repo), emit=msgs.append)
     assert got == "pkg/__init__.py"
     assert any("overwrites existing" in m for m in msgs)
+
+
+def test_ship_never_raises_on_place_exception(tmp_path, monkeypatch):
+    repo, _, ws = make_repo_with_ws(tmp_path)
+    monkeypatch.setattr(dmod, "place_and_verify",
+                        lambda w, p: (_ for _ in ()).throw(OSError("disk on fire")))
+    events = []
+    res = deliver.ship(str(ws), str(repo), "pkg/adder.py", "g", "d",
+                       emit=events.append, record=lambda e: events.append(e))
+    assert res == {"ok": False, "branch": None, "mr_url": None, "error": "exception"}
+    assert any(isinstance(e, dict) and e.get("error") == "exception" for e in events)
+
+
+def test_ship_rejects_invalid_path_at_entry(tmp_path):
+    repo, _, ws = make_repo_with_ws(tmp_path)
+    res = deliver.ship(str(ws), str(repo), "../evil.py", "g", "d", emit=lambda m: None)
+    assert res["error"] == "bad_path"
+    assert (ws / "solution.py").exists()        # chưa move gì cả

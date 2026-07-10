@@ -117,12 +117,15 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
             if MEM and MEM.recall(goal, dod) is not None:
                 verifier = gates.make_compile_gate(wd)   # unused: run_loop recalls before gating
                 frozen_tests = ""
+                recalled = True
             elif tests_src:
                 verifier = gates.make_pytest_gate(tests_src, wd)
                 frozen_tests = tests_src
+                recalled = False
                 notify("🧪 gate = pytest (tests from the ticket)")
             else:
                 derived = gates.derive_tests(goal, dod)      # fresh call, BEFORE generation; frozen
+                recalled = False
                 if derived:
                     verifier = gates.make_pytest_gate(derived, wd)
                     frozen_tests = derived
@@ -132,7 +135,7 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
                     frozen_tests = ""
                     notify("⚠️ Không derive được test từ DoD — gate = compile-only (YẾU). "
                            "Cân nhắc gửi lại kèm `Tests:`.")
-            dpath = deliver.freeze_deliver(deliver_path, goal, repo_path or "", emit=notify)
+            dpath = None if recalled else deliver.freeze_deliver(deliver_path, goal, repo_path or "", emit=notify)
             t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
                        deliver=dpath, repo=repo_path or "", tests_src=frozen_tests)
             res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod,

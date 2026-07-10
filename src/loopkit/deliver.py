@@ -12,6 +12,7 @@ Delivery fail KHÔNG rollback approve — báo rõ, giữ branch/file local.
 import os, pathlib, re, shutil, subprocess
 from typing import Optional
 from loopkit import config
+from loopkit import shield
 from loopkit.workspace import make_workspace
 
 
@@ -69,22 +70,22 @@ def create_mr(workspace: str, branch: str, title: str, body: str,
         return None, "MR skipped (LOOPKIT_MR_TOOL=off)"
     if tool != "link":
         use = tool
-        if tool not in ("glab", "gh"):               # auto: chỉ lúc này mới cần remote URL
-            url = remote_url if remote_url is not None else _remote_url(workspace)
-            use = "gh" if "github.com" in url else "glab"
-        cmd = {"glab": ["glab", "mr", "create", "--title", title, "--description",
-                        body, "--source-branch", branch, "--yes"],
-               "gh": ["gh", "pr", "create", "--title", title, "--body", body,
-                      "--head", branch]}[use]
-        if shutil.which(use):
-            try:
+        try:
+            if tool not in ("glab", "gh"):           # auto: chỉ lúc này mới cần remote URL
+                url = remote_url if remote_url is not None else _remote_url(workspace)
+                use = "gh" if "github.com" in url else "glab"
+            cmd = {"glab": ["glab", "mr", "create", "--title", title, "--description",
+                            body, "--source-branch", branch, "--yes"],
+                   "gh": ["gh", "pr", "create", "--title", title, "--body", body,
+                          "--head", branch]}[use]
+            if shutil.which(use):
                 r = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True,
                                    timeout=60)
                 m = re.search(r"https://\S+", r.stdout or "")
                 if r.returncode == 0 and m:
                     return m.group(0), f"MR tạo qua {use}"
-            except (OSError, subprocess.SubprocessError):
-                pass                                  # contract: KHÔNG raise — rơi về fallback
+        except (OSError, subprocess.SubprocessError):
+            pass                                      # contract: KHÔNG raise — rơi về fallback
     m = _MR_LINK_RE.search(push_output or "")
     if m:
         return m.group(0), "link create-MR từ push output (bấm để tạo)"
@@ -104,7 +105,7 @@ def infer_path(goal: str, repo: str, ask=None) -> Optional[str]:
     if ask is None:
         from loopkit.engine import ask_claude as ask      # lazy: tránh vòng import
     tree = subprocess.run(["git", "-C", repo, "ls-files"],
-                          capture_output=True, text=True).stdout
+                          capture_output=True, text=True, timeout=30).stdout
     files = "\n".join(tree.splitlines()[:400])
     reply = ask(f"REPO FILES:\n{files}\n\nGOAL:\n{goal}", _PLACER_SOUL,
                 model=config.ROLE_MODELS.get("orchestrator"))
@@ -158,43 +159,53 @@ def freeze_deliver(deliver_path, goal, repo, emit=print):
 def ship(workspace: str, repo: str, deliver_path: str, goal: str, dod: str,
          emit=print, record=lambda e: None) -> dict:
     """Chuỗi giao hàng sau approve. Mỗi bước fail -> emit + journal + DỪNG, không rollback."""
-    ok, detail = place_and_verify(workspace, deliver_path)
-    record({"stage": "deliver_gate", "ok": ok, "detail": detail[:200]})
-    if not ok:
-        emit(f"🚫 deliver abort — re-gate FAIL sau move: {detail}")
-        return {"ok": False, "branch": None, "mr_url": None, "error": "regate"}
-    module = pathlib.Path(deliver_path).stem
-    branch = f"feat/{module.replace('_', '-')}"
-    title = goal.splitlines()[0][:72]
+    if not validate_path(deliver_path, repo):
+        emit(f"🚫 deliver abort — Deliver path không hợp lệ: {deliver_path}")
+        record({"stage": "delivered", "error": "bad_path"})
+        return {"ok": False, "branch": None, "mr_url": None, "error": "bad_path"}
+    try:
+        ok, detail = place_and_verify(workspace, deliver_path)
+        record({"stage": "deliver_gate", "ok": ok, "detail": detail[:200]})
+        if not ok:
+            emit(f"🚫 deliver abort — re-gate FAIL sau move: {detail}")
+            return {"ok": False, "branch": None, "mr_url": None, "error": "regate"}
+        module = pathlib.Path(deliver_path).stem
+        branch = f"feat/{module.replace('_', '-')}"
+        guard = shield.mask if config.ENABLE_SHIELD else (lambda s: s)
+        title = guard(goal.splitlines()[0][:72])
 
-    def g(*args):
-        return subprocess.run(["git", "-C", workspace, *args],
-                              capture_output=True, text=True, timeout=120,
-                              env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})  # không treo chờ credential
+        def g(*args):
+            return subprocess.run(["git", "-C", workspace, *args],
+                                  capture_output=True, text=True, timeout=120,
+                                  env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})  # không treo chờ credential
 
-    paths = [deliver_path]
-    test_rel = str(pathlib.PurePosixPath(deliver_path).parent / f"test_{module}.py")
-    if (pathlib.Path(workspace) / test_rel).exists():   # compile-only mode không có test file
-        paths.append(test_rel)
-    for args in (("checkout", "-B", branch), ("add", *paths)):   # -B: revision re-run dùng lại branch
-        r = g(*args)
-        if r.returncode != 0:
-            emit(f"🚫 deliver abort — git FAIL: {(r.stderr or r.stdout)[-300:]}")
-            record({"stage": "delivered", "error": "git_failed"})
-            return {"ok": False, "branch": branch, "mr_url": None, "error": "git"}
-    c = g("commit", "-m", title)
-    if c.returncode != 0:
-        emit(f"🚫 deliver abort — commit FAIL: {(c.stderr or c.stdout)[-300:]}")
-        record({"stage": "delivered", "error": "commit_failed"})
-        return {"ok": False, "branch": branch, "mr_url": None, "error": "commit"}
-    p = g("push", "-u", "origin", branch)
-    if p.returncode != 0:
-        emit(f"🚫 push FAIL: {(p.stderr or p.stdout)[-300:]}\n"
-             f"↳ branch `{branch}` còn LOCAL tại {workspace} — push lại khi remote hết lỗi.")
-        record({"stage": "delivered", "error": "push_failed", "branch": branch})
-        return {"ok": False, "branch": branch, "mr_url": None, "error": "push"}
-    url, note = create_mr(workspace, branch, title, dod,
-                          push_output=(p.stdout or "") + (p.stderr or ""))
-    emit(f"🚢 delivered: {url or branch} ({note})")
-    record({"stage": "delivered", "branch": branch, "mr_url": url})
-    return {"ok": True, "branch": branch, "mr_url": url, "error": None}
+        paths = [deliver_path]
+        test_rel = str(pathlib.PurePosixPath(deliver_path).parent / f"test_{module}.py")
+        if (pathlib.Path(workspace) / test_rel).exists():   # compile-only mode không có test file
+            paths.append(test_rel)
+        for args in (("checkout", "-B", branch), ("add", *paths)):   # -B: revision re-run dùng lại branch
+            r = g(*args)
+            if r.returncode != 0:
+                emit(f"🚫 deliver abort — git FAIL: {(r.stderr or r.stdout)[-300:]}")
+                record({"stage": "delivered", "error": "git_failed"})
+                return {"ok": False, "branch": branch, "mr_url": None, "error": "git"}
+        c = g("commit", "-m", title)
+        if c.returncode != 0:
+            emit(f"🚫 deliver abort — commit FAIL: {(c.stderr or c.stdout)[-300:]}")
+            record({"stage": "delivered", "error": "commit_failed"})
+            return {"ok": False, "branch": branch, "mr_url": None, "error": "commit"}
+        p = g("push", "-u", "origin", branch)
+        if p.returncode != 0:
+            emit(f"🚫 push FAIL: {(p.stderr or p.stdout)[-300:]}\n"
+                 f"↳ branch `{branch}` còn LOCAL tại {workspace} — push lại khi remote hết lỗi.")
+            record({"stage": "delivered", "error": "push_failed", "branch": branch})
+            return {"ok": False, "branch": branch, "mr_url": None, "error": "push"}
+        url, note = create_mr(workspace, branch, title, guard(dod),
+                              push_output=(p.stdout or "") + (p.stderr or ""))
+        emit(f"🚢 delivered: {url or branch} ({note})")
+        record({"stage": "delivered", "branch": branch, "mr_url": url})
+        return {"ok": True, "branch": branch, "mr_url": url, "error": None}
+    except Exception as e:                       # fail-closed: post-approve tail không được nổ
+        emit(f"🚫 deliver abort — exception: {e}")
+        record({"stage": "delivered", "error": "exception", "detail": str(e)[:200]})
+        return {"ok": False, "branch": None, "mr_url": None, "error": "exception"}

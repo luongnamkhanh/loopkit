@@ -67,7 +67,8 @@ def cmd_run(text: str, thread=None) -> int:
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
     verifier, frozen_tests = _build_verifier(mem, goal, dod, tests_src, wd)
-    deliver_path = deliver.freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
+    recalled = bool(mem and mem.recall(goal, dod) is not None)
+    deliver_path = None if recalled else deliver.freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
     t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
                deliver=deliver_path, repo=repo, tests_src=frozen_tests)
@@ -209,7 +210,8 @@ def cmd_ticket_run(thread: str) -> int:
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
     verifier, frozen_tests = _build_verifier(mem, goal, dod, tests_src, wd)
-    deliver_path = deliver.freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
+    recalled = bool(mem and mem.recall(goal, dod) is not None)
+    deliver_path = None if recalled else deliver.freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
     t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
                deliver=deliver_path, repo=repo, tests_src=frozen_tests)

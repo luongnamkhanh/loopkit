@@ -228,7 +228,10 @@ def finish_suspended(mem, thread_id: str, payload: dict, decision: bool,
                                            tests_src=payload.get("tests", ""),
                                            workspace=payload.get("workspace", ""))
             _deliver.ship(ws, payload.get("repo", ""), payload["deliver"],
-                          payload.get("goal", ""), payload.get("dod", ""), emit=notify,
-                          record=lambda e: mem.append_event(thread_id, e))
+                          payload.get("goal", ""), payload.get("dod", ""),
+                          emit=lambda m: notify(guard(m)),
+                          record=lambda e: mem.append_event(thread_id, {
+                              k: (guard(v) if isinstance(v, str) else v)
+                              for k, v in e.items()}))
     else:
         notify("🚫 rejected (resumed sau restart) — không áp dụng artifact")
