@@ -74,6 +74,18 @@ def parse_repo(text: str):
     return m.group(1), (text[:m.start()] + text[m.end():]).strip()
 
 
+_DELIVER_RE = re.compile(r"(?i)\bdeliver:\s*([\w./-]+\.py)\s*")
+
+
+def parse_deliver(text: str):
+    """'Deliver: <path>.py' ở bất kỳ đâu trong ticket -> (path, text đã strip token).
+    First match wins; không có token -> (None, text nguyên vẹn)."""
+    m = _DELIVER_RE.search(text or "")
+    if not m:
+        return None, text or ""
+    return m.group(1), (text[:m.start()] + " " + text[m.end():]).strip()
+
+
 def derive_tests(goal: str, dod: str, ask=ask_claude):
     """EARS DoD -> frozen pytest source, or None if the reply isn't usable as tests."""
     reply = ask(f"GOAL:\n{goal}\n\nEARS DEFINITION OF DONE:\n{dod}", _TESTWRITER_SOUL,
