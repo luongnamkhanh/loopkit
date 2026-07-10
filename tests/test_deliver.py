@@ -288,3 +288,66 @@ def test_ensure_workspace_keeps_existing(tmp_path):
     _, _, ws = make_repo_with_ws(tmp_path)
     assert deliver.ensure_workspace("t1", "unused", "X", workspace=str(ws)) == str(ws)
     assert (ws / "solution.py").read_text() != "X"          # không ghi đè file đang có
+
+
+from loopkit.engine import Ticket, run_loop, finish_suspended
+
+
+def _fake_brain(monkeypatch):
+    """route -> code; generator trả code block; reviewer trả VERDICT: PASS.
+    ENABLE_MEMORY tắt để run_loop không tự tạo Memory ghi .loopkit_memory vào cwd."""
+    import loopkit.engine as eng
+    replies = iter(["```python\ndef f():\n    return 1\n```", "VERDICT: PASS"])
+    monkeypatch.setattr(eng, "route", lambda t, roles: "code")
+    monkeypatch.setattr(eng, "ask_claude", lambda p, s, model=None: next(replies))
+    monkeypatch.setattr(eng.config, "ENABLE_MEMORY", False)
+    return eng
+
+
+def test_run_loop_ships_after_human_approve(tmp_path, monkeypatch):
+    eng = _fake_brain(monkeypatch)
+    shipped = {}
+    monkeypatch.setattr(dmod, "ship",
+                        lambda ws, repo, path, goal, dod, emit=print, record=None:
+                        shipped.update(ws=ws, repo=repo, path=path) or
+                        {"ok": True, "branch": "feat/x", "mr_url": "u", "error": None})
+    t = Ticket(goal="g", dod="d", verifier=lambda a: (True, "ok"), risky=True,
+               deliver="pkg/x.py", repo=str(tmp_path))
+    res = run_loop(t, human_door=lambda a: True, notify=lambda m: None,
+                   journal_dir=str(tmp_path), memory=None,
+                   workspace=str(tmp_path))
+    assert res["approved"] and shipped["path"] == "pkg/x.py"
+
+
+def test_run_loop_no_ship_when_not_risky_or_no_deliver(tmp_path, monkeypatch):
+    for kwargs in ({"risky": False, "deliver": "pkg/x.py"},   # auto-pass: cấm deliver
+                   {"risky": True, "deliver": None}):          # không có path
+        eng = _fake_brain(monkeypatch)
+        called = []
+        monkeypatch.setattr(dmod, "ship",
+                            lambda *a, **k: called.append(1) or {"ok": True})
+        t = Ticket(goal="g", dod="d", verifier=lambda a: (True, "ok"),
+                   repo=str(tmp_path), **kwargs)
+        run_loop(t, human_door=lambda a: True, notify=lambda m: None,
+                 journal_dir=str(tmp_path), memory=None, workspace=str(tmp_path))
+        assert not called
+
+
+def test_finish_suspended_ships_from_payload(tmp_path, monkeypatch):
+    class FakeMem:
+        def register(self, *a, **k): ...
+        def store(self, *a, **k): ...
+    shipped = {}
+    monkeypatch.setattr(dmod, "ensure_workspace",
+                        lambda th, repo, art, tests_src="", workspace="": str(tmp_path))
+    monkeypatch.setattr(dmod, "ship",
+                        lambda ws, repo, path, goal, dod, emit=print, record=None:
+                        shipped.update(path=path) or
+                        {"ok": True, "branch": "b", "mr_url": None, "error": None})
+    payload = {"artifact": "A", "goal": "g", "dod": "d", "deliver": "pkg/x.py",
+               "repo": str(tmp_path), "tests": "T", "workspace": "/gone"}
+    finish_suspended(FakeMem(), "t1", payload, True, lambda m: None)
+    assert shipped["path"] == "pkg/x.py"
+    shipped.clear()
+    finish_suspended(FakeMem(), "t1", payload, False, lambda m: None)  # reject: không ship
+    assert not shipped

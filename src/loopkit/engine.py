@@ -63,6 +63,9 @@ class Ticket:
     dod: str                                    # Definition of Done (the loop's stop condition)
     verifier: Callable[[str], tuple]            # deterministic gate: artifact -> (passed, detail)
     risky: bool = False                         # True -> require human_door before "done"
+    deliver: Optional[str] = None               # Deliver: path (chốt lúc freeze) — spec 2026-07-10
+    repo: str = ""                              # repo đích (worktree gốc) cho delivery
+    tests_src: str = ""                         # frozen tests (cho door payload re-materialize)
 
 def default_human_door(artifact: str) -> bool:
     print("\n🚪 HUMAN DOOR — approval required (wire a Slack [Approve] button here).")
@@ -192,6 +195,11 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
                 if (not ticket.risky) or approved:
                     mem.store(ticket.goal, ticket.dod, artifact)   # cache only VERIFIED(+approved)
             record({"stage": "done", "turn": turn, "approved": approved})
+            if (approved and ticket.risky and ticket.deliver and ticket.repo
+                    and ws and config.DELIVER):
+                from loopkit import deliver as _deliver       # lazy: deliver imports engine
+                _deliver.ship(str(ws), ticket.repo, ticket.deliver,
+                              ticket.goal, ticket.dod, emit=emit, record=record)
             return {"ok": True, "cached": False, "worker": worker, "turns": turn,
                     "approved": approved, "artifact": artifact}
         feedback = f"Reviewer REJECTED:\n{reply}"                               # FEEDBACK -> loop
@@ -214,5 +222,12 @@ def finish_suspended(mem, thread_id: str, payload: dict, decision: bool,
         mem.store(payload.get("goal", ""), payload.get("dod", ""), artifact)
         notify("✅ approved (resumed sau restart)")
         notify(f"📦 artifact:\n```\n{guard(artifact[:2500])}\n```")
+        if payload.get("deliver") and config.DELIVER:
+            from loopkit import deliver as _deliver           # lazy: tránh vòng import
+            ws = _deliver.ensure_workspace(thread_id, payload.get("repo", ""), artifact,
+                                           tests_src=payload.get("tests", ""),
+                                           workspace=payload.get("workspace", ""))
+            _deliver.ship(ws, payload.get("repo", ""), payload["deliver"],
+                          payload.get("goal", ""), payload.get("dod", ""), emit=notify)
     else:
         notify("🚫 rejected (resumed sau restart) — không áp dụng artifact")
