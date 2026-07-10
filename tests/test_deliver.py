@@ -5,8 +5,7 @@ def test_parse_deliver_extracts_and_strips():
     path, rest = gates.parse_deliver(
         "Tinh bearing Deliver: flink/bearing.py DoD: WHEN x SHALL y")
     assert path == "flink/bearing.py"
-    assert "Deliver:" not in rest
-    assert rest.startswith("Tinh bearing") and "DoD: WHEN x SHALL y" in rest
+    assert rest == "Tinh bearing DoD: WHEN x SHALL y"
 
 
 def test_parse_deliver_absent():

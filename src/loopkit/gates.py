@@ -83,7 +83,7 @@ def parse_deliver(text: str):
     m = _DELIVER_RE.search(text or "")
     if not m:
         return None, text or ""
-    return m.group(1), (text[:m.start()] + " " + text[m.end():]).strip()
+    return m.group(1), (text[:m.start()] + text[m.end():]).strip()
 
 
 def derive_tests(goal: str, dod: str, ask=ask_claude):
