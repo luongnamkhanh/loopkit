@@ -335,19 +335,33 @@ def test_run_loop_no_ship_when_not_risky_or_no_deliver(tmp_path, monkeypatch):
 
 def test_finish_suspended_ships_from_payload(tmp_path, monkeypatch):
     class FakeMem:
+        def __init__(self):
+            self.events = []
+
         def register(self, *a, **k): ...
+
         def store(self, *a, **k): ...
+
+        def append_event(self, thread, entry):
+            self.events.append(entry)
+
     shipped = {}
     monkeypatch.setattr(dmod, "ensure_workspace",
                         lambda th, repo, art, tests_src="", workspace="": str(tmp_path))
-    monkeypatch.setattr(dmod, "ship",
-                        lambda ws, repo, path, goal, dod, emit=print, record=None:
-                        shipped.update(path=path) or
-                        {"ok": True, "branch": "b", "mr_url": None, "error": None})
+
+    def fake_ship(ws, repo, path, goal, dod, emit=print, record=None):
+        if record:
+            record({"stage": "delivered"})
+        shipped.update(path=path)
+        return {"ok": True, "branch": "b", "mr_url": None, "error": None}
+
+    monkeypatch.setattr(dmod, "ship", fake_ship)
     payload = {"artifact": "A", "goal": "g", "dod": "d", "deliver": "pkg/x.py",
                "repo": str(tmp_path), "tests": "T", "workspace": "/gone"}
-    finish_suspended(FakeMem(), "t1", payload, True, lambda m: None)
+    fm = FakeMem()
+    finish_suspended(fm, "t1", payload, True, lambda m: None)
     assert shipped["path"] == "pkg/x.py"
+    assert fm.events and fm.events[0]["stage"] == "delivered"   # resume ship IS journaled
     shipped.clear()
     finish_suspended(FakeMem(), "t1", payload, False, lambda m: None)  # reject: không ship
     assert not shipped
