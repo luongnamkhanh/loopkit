@@ -144,3 +144,13 @@ def test_ship_aborts_on_regate_fail_no_commit(tmp_path):
     res = deliver.ship(str(ws), str(repo), "pkg/adder.py", "add", "dod")
     assert not res["ok"] and res["error"] == "regate"
     assert _git(repo, "log", "--oneline", "feat/adder").returncode != 0  # branch không tồn tại
+
+
+def test_ship_compile_only_no_test_file(tmp_path):
+    repo, bare, ws = make_repo_with_ws(tmp_path)
+    (ws / "test_ticket.py").unlink()
+    res = deliver.ship(str(ws), str(repo), "pkg/adder.py", "add two numbers", "dod")
+    assert res["ok"], res
+    r = subprocess.run(["git", "-C", str(bare), "log", "--oneline", "feat/adder"],
+                       capture_output=True, text=True)
+    assert "add two numbers" in r.stdout

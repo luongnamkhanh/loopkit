@@ -9,7 +9,7 @@ Chuỗi deterministic, KHÔNG LLM lúc giao hàng (path đã chốt lúc freeze)
 
 Delivery fail KHÔNG rollback approve — báo rõ, giữ branch/file local.
 """
-import pathlib, re, shutil, subprocess
+import os, pathlib, re, shutil, subprocess
 from typing import Optional
 from loopkit import config
 from loopkit.workspace import make_workspace
@@ -67,15 +67,24 @@ def ship(workspace: str, repo: str, deliver_path: str, goal: str, dod: str,
         return {"ok": False, "branch": None, "mr_url": None, "error": "regate"}
     module = pathlib.Path(deliver_path).stem
     branch = f"feat/{module.replace('_', '-')}"
-    test_rel = str(pathlib.PurePosixPath(deliver_path).parent / f"test_{module}.py")
+    title = goal.splitlines()[0][:72]
 
     def g(*args):
         return subprocess.run(["git", "-C", workspace, *args],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, timeout=120,
+                              env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})  # không treo chờ credential
 
-    g("checkout", "-B", branch)                     # -B: revision re-run dùng lại branch
-    g("add", deliver_path, test_rel)
-    c = g("commit", "-m", goal.splitlines()[0][:72])
+    paths = [deliver_path]
+    test_rel = str(pathlib.PurePosixPath(deliver_path).parent / f"test_{module}.py")
+    if (pathlib.Path(workspace) / test_rel).exists():   # compile-only mode không có test file
+        paths.append(test_rel)
+    for args in (("checkout", "-B", branch), ("add", *paths)):   # -B: revision re-run dùng lại branch
+        r = g(*args)
+        if r.returncode != 0:
+            emit(f"🚫 deliver abort — git FAIL: {(r.stderr or r.stdout)[-300:]}")
+            record({"stage": "delivered", "error": "git_failed"})
+            return {"ok": False, "branch": branch, "mr_url": None, "error": "git"}
+    c = g("commit", "-m", title)
     if c.returncode != 0:
         emit(f"🚫 deliver abort — commit FAIL: {(c.stderr or c.stdout)[-300:]}")
         record({"stage": "delivered", "error": "commit_failed"})
@@ -86,7 +95,7 @@ def ship(workspace: str, repo: str, deliver_path: str, goal: str, dod: str,
              f"↳ branch `{branch}` còn LOCAL tại {workspace} — push lại khi remote hết lỗi.")
         record({"stage": "delivered", "error": "push_failed", "branch": branch})
         return {"ok": False, "branch": branch, "mr_url": None, "error": "push"}
-    url, note = create_mr(workspace, branch, goal.splitlines()[0][:72], dod,
+    url, note = create_mr(workspace, branch, title, dod,
                           push_output=(p.stdout or "") + (p.stderr or ""))
     emit(f"🚢 delivered: {url or branch} ({note})")
     record({"stage": "delivered", "branch": branch, "mr_url": url})
