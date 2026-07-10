@@ -91,6 +91,44 @@ def create_mr(workspace: str, branch: str, title: str, body: str,
     return None, f"tạo MR tay từ branch {branch}"
 
 
+_PLACER_SOUL = (
+    "You are a code-placement assistant. Given the repo file list and a goal, reply with "
+    "EXACTLY ONE relative path (ending in .py) for the NEW module, following the repo's "
+    "existing layout and naming. Path only — no prose, no backticks."
+)
+
+
+def infer_path(goal: str, repo: str, ask=None) -> Optional[str]:
+    """Freeze-time: chốt Deliver: TRƯỚC generation để door hiện được path.
+    Reply không validate được -> None (degraded: caller skip delivery + warning)."""
+    if ask is None:
+        from loopkit.engine import ask_claude as ask      # lazy: tránh vòng import
+    tree = subprocess.run(["git", "-C", repo, "ls-files"],
+                          capture_output=True, text=True).stdout
+    files = "\n".join(tree.splitlines()[:400])
+    reply = ask(f"REPO FILES:\n{files}\n\nGOAL:\n{goal}", _PLACER_SOUL,
+                model=config.ROLE_MODELS.get("orchestrator"))
+    lines = (reply or "").strip().splitlines()
+    if not lines:
+        return None
+    cand = lines[-1].strip().strip("`").strip()
+    return cand if validate_path(cand, repo) else None
+
+
+def ensure_workspace(thread_id: str, repo: str, artifact: str,
+                     tests_src: str = "", workspace: str = "") -> str:
+    """Resume path (§8.1): worktree /tmp có thể bay sau reboot — dựng lại từ door payload."""
+    p = pathlib.Path(workspace) if workspace else None
+    if p is None or not p.exists():
+        ws, _ = make_workspace(thread_id, repo=repo)
+        p = pathlib.Path(ws)
+    if not (p / "solution.py").exists():
+        (p / "solution.py").write_text(artifact)
+    if tests_src and not (p / "test_ticket.py").exists():
+        (p / "test_ticket.py").write_text(tests_src)
+    return str(p)
+
+
 def ship(workspace: str, repo: str, deliver_path: str, goal: str, dod: str,
          emit=print, record=lambda e: None) -> dict:
     """Chuỗi giao hàng sau approve. Mỗi bước fail -> emit + journal + DỪNG, không rollback."""

@@ -243,3 +243,48 @@ def test_create_mr_timeout_never_raises(monkeypatch, tmp_path):
                                   push_output=GITHUB_PUSH,
                                   remote_url="git@github.com:o/r.git")
     assert url and "pull/new" in url
+
+
+def test_infer_path_valid_reply(tmp_path):
+    repo, _, _ = make_repo_with_ws(tmp_path)
+    got = deliver.infer_path("thêm hàm cộng", str(repo),
+                             ask=lambda p, s, model=None: "pkg/adder.py")
+    assert got == "pkg/adder.py"
+
+
+def test_infer_path_junk_reply_degrades_to_none(tmp_path):
+    repo, _, _ = make_repo_with_ws(tmp_path)
+    for junk in ("/etc/x.py", "../up.py", "tôi nghĩ là pkg nhé", ""):
+        assert deliver.infer_path("g", str(repo),
+                                  ask=lambda p, s, model=None, j=junk: j) is None
+
+
+def test_infer_path_prompt_contains_tree_and_goal(tmp_path):
+    repo, _, _ = make_repo_with_ws(tmp_path)
+    seen = {}
+
+    def fake_ask(prompt, soul, model=None):
+        seen["prompt"] = prompt
+        return "pkg/adder.py"
+
+    deliver.infer_path("thêm hàm cộng", str(repo), ask=fake_ask)
+    assert "pkg/__init__.py" in seen["prompt"] and "thêm hàm cộng" in seen["prompt"]
+
+
+def test_ensure_workspace_rematerializes(tmp_path, monkeypatch):
+    repo, _, ws = make_repo_with_ws(tmp_path)
+    import shutil as _sh
+    _git(repo, "worktree", "remove", "--force", str(ws))   # mô phỏng /tmp bay sau reboot
+    monkeypatch.setattr(dmod, "make_workspace",
+                        lambda t, repo=None: (str(tmp_path / "re"), "worktree"))
+    (tmp_path / "re").mkdir()
+    out = deliver.ensure_workspace("t1", str(repo), "ART", "TESTS", workspace=str(ws))
+    assert out == str(tmp_path / "re")
+    assert (tmp_path / "re" / "solution.py").read_text() == "ART"
+    assert (tmp_path / "re" / "test_ticket.py").read_text() == "TESTS"
+
+
+def test_ensure_workspace_keeps_existing(tmp_path):
+    _, _, ws = make_repo_with_ws(tmp_path)
+    assert deliver.ensure_workspace("t1", "unused", "X", workspace=str(ws)) == str(ws)
+    assert (ws / "solution.py").read_text() != "X"          # không ghi đè file đang có
