@@ -71,3 +71,17 @@ def test_place_and_verify_compile_only_when_no_tests(tmp_path):
     (ws / "test_ticket.py").unlink()
     ok, detail = deliver.place_and_verify(str(ws), "pkg/adder.py")
     assert ok
+
+
+def test_place_and_verify_rewrite_is_word_boundary(tmp_path):
+    ws = make_ws(tmp_path)
+    (ws / "solution.py").write_text(
+        "class resolution:\n    value = 3\n\ndef add(a, b):\n    return a + b\n")
+    (ws / "test_ticket.py").write_text(
+        "import solution\nfrom solution import add\n\n"
+        "def test_add():\n    assert add(1, 2) == 3\n"
+        "def test_res():\n    assert solution.resolution.value == 3\n")
+    ok, detail = deliver.place_and_verify(str(ws), "pkg/adder.py")
+    assert ok, detail
+    tsrc = (ws / "pkg" / "test_adder.py").read_text()
+    assert "resolution" in tsrc and "adder.resolution.value" in tsrc

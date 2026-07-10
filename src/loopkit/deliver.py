@@ -22,7 +22,7 @@ def validate_path(path: str, repo: str) -> bool:
     if p.is_absolute() or ".." in p.parts:
         return False
     root = pathlib.Path(repo).resolve()
-    return str((root / path).resolve()).startswith(str(root))
+    return (root / path).resolve().is_relative_to(root)  # không dùng startswith: dính repo_evil/symlink
 
 
 def place_and_verify(workspace: str, deliver_path: str):
@@ -38,10 +38,9 @@ def place_and_verify(workspace: str, deliver_path: str):
     sol.rename(dst)
     tsrc_f = ws / "test_ticket.py"
     if tsrc_f.exists():
-        src = (tsrc_f.read_text()
-               .replace("from solution import", f"from {module} import")
-               .replace("import solution", f"import {module}")
-               .replace("solution.", f"{module}."))
+        # ponytail: \b-rewrite đổi cả chữ "solution" trong string literal của test —
+        # re-gate fail-closed bắt được nếu vỡ; nâng cấp AST rewrite khi có ca thật.
+        src = re.sub(r"\bsolution\b", module, tsrc_f.read_text())
         tdst = dst.parent / f"test_{module}.py"
         tdst.write_text(src)
         tsrc_f.unlink()
@@ -49,5 +48,5 @@ def place_and_verify(workspace: str, deliver_path: str):
                            cwd=dst.parent, capture_output=True, text=True, timeout=120)
         return r.returncode == 0, (r.stdout + r.stderr).strip()[-700:]
     r = subprocess.run(["python3", "-m", "py_compile", str(dst)],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=60)
     return r.returncode == 0, (r.stderr.strip() or "compiles OK (không có test — gate yếu)")[-300:]
