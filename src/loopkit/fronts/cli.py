@@ -3,9 +3,9 @@
 Cùng một engine với front Slack; khác biệt duy nhất: door là prompt terminal và
 workspace lấy từ cwd (git repo -> worktree per ticket; không phải git -> tmp dir).
 """
-import argparse, subprocess, time
+import argparse, pathlib, subprocess, time
 
-from loopkit import __version__, config, gates, refine, shield
+from loopkit import __version__, config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
 from loopkit.memory import Memory
 from loopkit.workspace import make_workspace
@@ -19,9 +19,11 @@ def _mem():
     return Memory(config.MEMORY_DIR) if config.ENABLE_MEMORY else None
 
 
-def terminal_door(artifact: str) -> bool:
+def terminal_door(artifact: str, deliver: str = None) -> bool:
     print("\n🚪 HUMAN DOOR — artifact chờ duyệt:\n")
     print(_mask((artifact or "")[:2500]))
+    if deliver:
+        print(f"\n📦 Deliver: {deliver}")        # duyệt = duyệt cả chỗ đặt
     try:
         return input("\nApprove? [y/N] ").strip().lower() in ("y", "yes")
     except EOFError:                                 # non-interactive: fail-closed
@@ -35,23 +37,47 @@ def _cwd_repo() -> str:
 
 
 def _build_verifier(mem, goal, dod, tests_src, wd):
+    """-> (verifier, frozen_tests_src) — tests để door payload re-materialize được."""
     if mem and mem.recall(goal, dod) is not None:
-        return gates.make_compile_gate(wd)           # unused: run_loop recall trước gate
+        return gates.make_compile_gate(wd), ""       # unused: run_loop recall trước gate
     if tests_src:
         print("🧪 gate = pytest (tests từ ticket)")
-        return gates.make_pytest_gate(tests_src, wd)
+        return gates.make_pytest_gate(tests_src, wd), tests_src
     derived = gates.derive_tests(goal, dod)          # fresh call TRƯỚC generation; frozen
     if derived:
         print(f"🧪 gate = pytest (derived, frozen):\n{_mask(derived[:1200])}")
-        return gates.make_pytest_gate(derived, wd)
+        return gates.make_pytest_gate(derived, wd), derived
     print("⚠️ Không derive được test — gate compile-only (YẾU).")
-    return gates.make_compile_gate(wd)
+    return gates.make_compile_gate(wd), ""
+
+
+def _freeze_deliver(deliver_path, goal, repo):
+    """Chốt Deliver: lúc freeze. Token có sẵn > infer > degraded (None + warning)."""
+    if not (repo and config.DELIVER):
+        return None
+    if deliver_path is None:
+        deliver_path = deliver.infer_path(goal, repo)
+        if deliver_path:
+            exists = (pathlib.Path(repo) / deliver_path).exists()
+            print(f"📦 Deliver: {deliver_path} (AI đề xuất)"
+                  + (" (overwrites existing)" if exists else ""))
+        else:
+            print("⚠️ Không chốt được Deliver: — sẽ KHÔNG auto-deliver "
+                  "(artifact nằm ở worktree).")
+        return deliver_path
+    if not deliver.validate_path(deliver_path, repo):
+        print(f"⚠️ Deliver: {deliver_path} không hợp lệ — sẽ KHÔNG auto-deliver.")
+        return None
+    exists = (pathlib.Path(repo) / deliver_path).exists()
+    print(f"📦 Deliver: {deliver_path}" + (" (overwrites existing)" if exists else ""))
+    return deliver_path
 
 
 def cmd_run(text: str, thread=None) -> int:
     repo_name, text = gates.parse_repo(text)
     if repo_name:
         print(f"⚠️ CLI bỏ qua 'Repo: {repo_name}' — cwd là repo đích.")
+    deliver_path, text = gates.parse_deliver(text)
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         print("🙅 Thiếu DoD. Cú pháp: loopkit run '<goal> DoD: <EARS> [Tests: <pytest>]'")
@@ -62,10 +88,13 @@ def cmd_run(text: str, thread=None) -> int:
     wd, kind = make_workspace(thread, repo=repo)
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
-    verifier = _build_verifier(mem, goal, dod, tests_src, wd)
+    verifier, frozen_tests = _build_verifier(mem, goal, dod, tests_src, wd)
+    deliver_path = _freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
-    t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
-    res = run_loop(t, human_door=terminal_door, notify=print, project_context=ctx,
+    t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
+               deliver=deliver_path, repo=repo, tests_src=frozen_tests)
+    res = run_loop(t, human_door=lambda a: terminal_door(a, deliver=deliver_path),
+                   notify=print, project_context=ctx,
                    memory=mem, thread_id=str(thread), workspace=wd)
     if res.get("ok"):
         status = "✅ approved" if res.get("approved") else "⏸️ done — chưa duyệt"
@@ -173,11 +202,12 @@ def cmd_idea_answer(thread: str, answer: str) -> int:
     return _agent_refine_step(mem, thread)
 
 
-def make_suspend_door(mem, thread, goal, dod):
+def make_suspend_door(mem, thread, goal, dod, deliver="", repo="", ws="", tests=""):
     """Door không chặn cho agent-mode: persist rồi trả False — approve là lệnh riêng."""
     def door(artifact: str) -> bool:
         mem.door_open(thread, {"channel": "cli", "artifact": artifact,
-                               "goal": goal, "dod": dod})
+                               "goal": goal, "dod": dod, "deliver": deliver,
+                               "repo": repo, "workspace": ws, "tests": tests})
         return False
     return door
 
@@ -190,6 +220,7 @@ def cmd_ticket_run(thread: str) -> int:
         print(f"STALE: thread chưa có draft (status={run.get('status')})")
         return 1
     repo_name, text = gates.parse_repo(draft)
+    deliver_path, text = gates.parse_deliver(text)
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         print("FAILED: draft không parse được DoD")
@@ -199,10 +230,14 @@ def cmd_ticket_run(thread: str) -> int:
     wd, kind = make_workspace(thread, repo=repo)
     if kind == "worktree":
         print(f"🌿 workspace = worktree {wd}")
-    verifier = _build_verifier(mem, goal, dod, tests_src, wd)
+    verifier, frozen_tests = _build_verifier(mem, goal, dod, tests_src, wd)
+    deliver_path = _freeze_deliver(deliver_path, goal, repo)     # chốt TRƯỚC generation
     ctx = "" if (repo and config.ENABLE_TOOLS) else read_agents_md(".")
-    t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True)
-    res = run_loop(t, human_door=make_suspend_door(mem, thread, goal, dod),
+    t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
+               deliver=deliver_path, repo=repo, tests_src=frozen_tests)
+    res = run_loop(t, human_door=make_suspend_door(mem, thread, goal, dod,
+                                                   deliver=deliver_path or "", repo=repo,
+                                                   ws=wd, tests=frozen_tests),
                    notify=print, project_context=ctx, memory=mem,
                    thread_id=str(thread), workspace=wd)
     if res.get("ok") and mem.door_get(thread):
@@ -210,6 +245,8 @@ def cmd_ticket_run(thread: str) -> int:
         print("ARTIFACT:")
         print(_mask((res.get("artifact") or "")[:2500]))
         print("ARTIFACT_END")
+        if deliver_path:
+            print(f"DELIVER: {deliver_path}")
         return 0
     if res.get("ok"):                                           # phòng hờ: ok mà không door
         print("DONE")

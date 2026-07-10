@@ -365,3 +365,69 @@ def test_finish_suspended_ships_from_payload(tmp_path, monkeypatch):
     shipped.clear()
     finish_suspended(FakeMem(), "t1", payload, False, lambda m: None)  # reject: không ship
     assert not shipped
+
+
+from loopkit.fronts import cli as clif
+
+
+def test_cli_run_passes_deliver_into_ticket(tmp_path, monkeypatch):
+    repo, _, _ = make_repo_with_ws(tmp_path)
+    seen = {}
+    monkeypatch.setattr(clif, "_cwd_repo", lambda: str(repo))
+    monkeypatch.setattr(clif, "_build_verifier",
+                        lambda mem, g, d, t, wd: (lambda a: (True, "ok"), "TESTS"))
+    monkeypatch.setattr(clif, "make_workspace",
+                        lambda th, repo=None: (str(tmp_path / "ws2"), "worktree"))
+    (tmp_path / "ws2").mkdir(exist_ok=True)
+    monkeypatch.setattr(clif, "run_loop",
+                        lambda t, **kw: seen.update(ticket=t) or
+                        {"ok": True, "approved": True, "worker": "code", "turns": 1})
+    monkeypatch.setenv("LOOPKIT_ENABLE_MEMORY", "0")
+    import importlib
+    importlib.reload(config)
+    try:
+        clif.cmd_run("goal Deliver: pkg/adder.py DoD: WHEN x SHALL y")
+    finally:
+        monkeypatch.delenv("LOOPKIT_ENABLE_MEMORY")
+        importlib.reload(config)
+    t = seen["ticket"]
+    assert t.deliver == "pkg/adder.py" and t.repo == str(repo)
+    assert t.tests_src == "TESTS"
+
+
+def test_cli_run_infers_when_missing(tmp_path, monkeypatch, capsys):
+    repo, _, _ = make_repo_with_ws(tmp_path)
+    monkeypatch.setattr(clif, "_cwd_repo", lambda: str(repo))
+    monkeypatch.setattr(clif, "_build_verifier",
+                        lambda mem, g, d, t, wd: (lambda a: (True, "ok"), ""))
+    monkeypatch.setattr(clif, "make_workspace",
+                        lambda th, repo=None: (str(tmp_path / "ws3"), "worktree"))
+    (tmp_path / "ws3").mkdir(exist_ok=True)
+    monkeypatch.setattr(clif.deliver, "infer_path", lambda g, r: "pkg/adder.py")
+    seen = {}
+    monkeypatch.setattr(clif, "run_loop",
+                        lambda t, **kw: seen.update(ticket=t) or
+                        {"ok": True, "approved": True, "worker": "code", "turns": 1})
+    monkeypatch.setenv("LOOPKIT_ENABLE_MEMORY", "0")
+    import importlib
+    importlib.reload(config)
+    try:
+        clif.cmd_run("goal DoD: WHEN x SHALL y")
+    finally:
+        monkeypatch.delenv("LOOPKIT_ENABLE_MEMORY")
+        importlib.reload(config)
+    assert seen["ticket"].deliver == "pkg/adder.py"
+    assert "AI đề xuất" in capsys.readouterr().out
+
+
+def test_suspend_door_payload_carries_delivery(tmp_path):
+    opened = {}
+
+    class FakeMem:
+        def door_open(self, th, payload):
+            opened.update(payload)
+    door = clif.make_suspend_door(FakeMem(), "t", "g", "d",
+                                  deliver="pkg/x.py", repo="/r", ws="/w", tests="T")
+    assert door("ART") is False
+    assert (opened["deliver"], opened["repo"], opened["workspace"], opened["tests"]) == \
+           ("pkg/x.py", "/r", "/w", "T")
