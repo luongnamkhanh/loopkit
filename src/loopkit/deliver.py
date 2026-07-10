@@ -57,7 +57,7 @@ _MR_LINK_RE = re.compile(r"https://\S*(?:merge_requests/new|pull/new)\S*")
 
 def _remote_url(workspace: str) -> str:
     r = subprocess.run(["git", "-C", workspace, "remote", "get-url", "origin"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=30)
     return r.stdout.strip()
 
 
@@ -68,18 +68,23 @@ def create_mr(workspace: str, branch: str, title: str, body: str,
     if tool == "off":
         return None, "MR skipped (LOOPKIT_MR_TOOL=off)"
     if tool != "link":
-        url = remote_url if remote_url is not None else _remote_url(workspace)
-        use = tool if tool in ("glab", "gh") else ("gh" if "github.com" in url else "glab")
+        use = tool
+        if tool not in ("glab", "gh"):               # auto: chỉ lúc này mới cần remote URL
+            url = remote_url if remote_url is not None else _remote_url(workspace)
+            use = "gh" if "github.com" in url else "glab"
         cmd = {"glab": ["glab", "mr", "create", "--title", title, "--description",
                         body, "--source-branch", branch, "--yes"],
                "gh": ["gh", "pr", "create", "--title", title, "--body", body,
                       "--head", branch]}[use]
         if shutil.which(use):
-            r = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True,
-                               timeout=60)
-            m = re.search(r"https://\S+", r.stdout or "")
-            if r.returncode == 0 and m:
-                return m.group(0), f"MR tạo qua {use}"
+            try:
+                r = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True,
+                                   timeout=60)
+                m = re.search(r"https://\S+", r.stdout or "")
+                if r.returncode == 0 and m:
+                    return m.group(0), f"MR tạo qua {use}"
+            except (OSError, subprocess.SubprocessError):
+                pass                                  # contract: KHÔNG raise — rơi về fallback
     m = _MR_LINK_RE.search(push_output or "")
     if m:
         return m.group(0), "link create-MR từ push output (bấm để tạo)"

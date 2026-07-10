@@ -213,3 +213,33 @@ def test_create_mr_off(monkeypatch, tmp_path):
     finally:
         monkeypatch.delenv("LOOPKIT_MR_TOOL")
         importlib.reload(config)
+
+
+def test_create_mr_cli_fails_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setattr(dmod.shutil, "which", lambda name: "/bin/" + name)
+
+    def fake_run(cmd, **kw):
+        class R:  # noqa: N801
+            returncode = 1
+            stdout = ""
+            stderr = "api error"
+        return R()
+
+    monkeypatch.setattr(dmod.subprocess, "run", fake_run)
+    url, note = deliver.create_mr(str(tmp_path), "feat/x", "t", "b",
+                                  push_output=GITLAB_PUSH,
+                                  remote_url="https://gitlab.com/g/p.git")
+    assert url and "merge_requests/new" in url
+
+
+def test_create_mr_timeout_never_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(dmod.shutil, "which", lambda name: "/bin/" + name)
+
+    def fake_run(cmd, **kw):
+        raise dmod.subprocess.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr(dmod.subprocess, "run", fake_run)
+    url, note = deliver.create_mr(str(tmp_path), "feat/x", "t", "b",
+                                  push_output=GITHUB_PUSH,
+                                  remote_url="git@github.com:o/r.git")
+    assert url and "pull/new" in url
