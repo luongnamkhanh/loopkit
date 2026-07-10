@@ -48,6 +48,10 @@ ENABLE_TOOLS = _env_bool("ENABLE_TOOLS", False)   # off by default: text mode = 
 AGENT_TIMEOUT = _env_int("AGENT_TIMEOUT", 600)    # tool sessions run much longer than one-shot
 TARGET_REPO = _env_str("TARGET_REPO", "")         # git repo for worktree workspaces ("" = standalone)
 
+# --- delivery (post-approve ship) — spec 2026-07-10 ---
+DELIVER = _env_bool("DELIVER", True)              # tắt = behavior cũ (artifact nằm worktree)
+MR_TOOL = _env_str("MR_TOOL", "auto")             # auto|glab|gh|link|off
+
 
 # --- multi-repo allowlist (Repo: routing) ---
 def _parse_repos(raw: str) -> dict:

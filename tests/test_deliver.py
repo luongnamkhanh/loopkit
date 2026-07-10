@@ -154,3 +154,62 @@ def test_ship_compile_only_no_test_file(tmp_path):
     r = subprocess.run(["git", "-C", str(bare), "log", "--oneline", "feat/adder"],
                        capture_output=True, text=True)
     assert "add two numbers" in r.stdout
+
+
+import loopkit.deliver as dmod
+from loopkit import config
+
+
+GITLAB_PUSH = ("remote:\nremote: To create a merge request for feat/adder, visit:\n"
+               "remote:   https://gitlab.com/g/p/-/merge_requests/new?"
+               "merge_request%5Bsource_branch%5D=feat%2Fadder\nremote:\n")
+GITHUB_PUSH = ("remote:\nremote: Create a pull request for 'feat/adder' on GitHub by visiting:\n"
+               "remote:      https://github.com/o/r/pull/new/feat/adder\nremote:\n")
+
+
+def test_create_mr_fallback_link_gitlab(monkeypatch, tmp_path):
+    monkeypatch.setattr(dmod.shutil, "which", lambda _: None)
+    url, note = dmod.create_mr(str(tmp_path), "feat/adder", "t", "b",
+                               push_output=GITLAB_PUSH,
+                               remote_url="https://gitlab.com/g/p.git")
+    assert url and "merge_requests/new" in url
+
+
+def test_create_mr_fallback_link_github(monkeypatch, tmp_path):
+    monkeypatch.setattr(dmod.shutil, "which", lambda _: None)
+    url, note = dmod.create_mr(str(tmp_path), "feat/adder", "t", "b",
+                               push_output=GITHUB_PUSH,
+                               remote_url="git@github.com:o/r.git")
+    assert url and "pull/new" in url
+
+
+def test_create_mr_via_glab(monkeypatch, tmp_path):
+    monkeypatch.setattr(dmod.shutil, "which", lambda name: "/bin/" + name)
+    calls = {}
+
+    def fake_run(cmd, **kw):
+        calls["cmd"] = cmd
+        class R:  # noqa: N801
+            returncode = 0
+            stdout = "https://gitlab.com/g/p/-/merge_requests/7\n"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(dmod.subprocess, "run", fake_run)
+    url, note = dmod.create_mr(str(tmp_path), "feat/adder", "tiêu đề", "dod",
+                               remote_url="https://gitlab.com/g/p.git")
+    assert url == "https://gitlab.com/g/p/-/merge_requests/7"
+    assert calls["cmd"][0] == "glab"
+
+
+def test_create_mr_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOOPKIT_MR_TOOL", "off")
+    import importlib
+    importlib.reload(config)
+    try:
+        url, note = dmod.create_mr(str(tmp_path), "b", "t", "d",
+                                   remote_url="https://gitlab.com/g/p.git")
+        assert url is None and "off" in note
+    finally:
+        monkeypatch.delenv("LOOPKIT_MR_TOOL")
+        importlib.reload(config)
