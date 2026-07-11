@@ -52,6 +52,9 @@ TARGET_REPO = _env_str("TARGET_REPO", "")         # git repo for worktree worksp
 DELIVER = _env_bool("DELIVER", True)              # tắt = behavior cũ (artifact nằm worktree)
 MR_TOOL = _env_str("MR_TOOL", "auto")             # auto|glab|gh|link|off
 
+# --- telegram front (spec 2026-07-11) ---
+TG_TOKEN = _env_str("TG_TOKEN", "")
+TG_CHAT_ID = _env_str("TG_CHAT_ID", "")      # trust boundary: chỉ nhận update từ chat này
 
 # --- multi-repo allowlist (Repo: routing) ---
 def _parse_repos(raw: str) -> dict:
