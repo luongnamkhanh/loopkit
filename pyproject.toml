@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loopkit"
-version = "0.1.0"
+version = "1.0.0"
 description = "Loop framework: gated, reviewed, human-approved agent runs — CLI and Slack fronts"
 requires-python = ">=3.10"
 dependencies = []
