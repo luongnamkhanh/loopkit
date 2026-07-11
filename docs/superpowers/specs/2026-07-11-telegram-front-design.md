@@ -46,14 +46,12 @@ channel) và nằm trong workspace không kiểm soát được. Cần front đi
   `LOOPKIT_REPOS` (fail-closed như Slack), `Deliver:` + freeze qua `deliver.freeze_deliver`
   (emit = send), worktree per ticket, `run_loop` với suspend-style door (xem §4).
 - Không `DoD:` → idea refinement: analyst hỏi từng câu (mỗi câu một message).
-- **Thread id = `tg-<message_id của intake>`.** Routing câu trả lời:
-  - reply vào BẤT KỲ message nào thuộc chuỗi một run → route run đó (map message_id→thread
-    giữ trong registry qua `mem.register(thread, tg_msgs=[...])`);
-  - message trần (không DoD, không reply) khi có đúng MỘT thread `refining` → là ANSWER cho
-    thread đó (muốn mở idea mới trong lúc này: reply vô message intake cũ để answer, còn
-    message trần LUÔN ưu tiên làm answer — luật đơn giản cho một người dùng);
-  - message trần khi KHÔNG có thread `refining` nào → idea MỚI;
-  - mơ hồ (≥2 thread đang hỏi) → bot liệt kê thread + yêu cầu reply trực tiếp.
+- **Thread id = `tg-<message_id của intake>`.** Routing câu trả lời — 3 luật, không state:
+  - message trần (không DoD) khi có đúng MỘT thread `refining` → ANSWER cho thread đó;
+  - message trần khi KHÔNG có thread `refining` → idea MỚI;
+  - ≥2 thread `refining` → bot từ chối nhận answer trần, bảo chốt bớt một cái đã.
+  # ponytail: không map message_id→thread — một người dùng hiếm khi refine 2 ticket song
+  # song; khi nào cấn thật thì thêm reply-to routing.
 - Draft flow như Slack: draft qua gate `parse_ticket`+AST trước khi post, nút
   `[▶️ Run] [✏️ Góp ý] [🚫 Huỷ]` (inline keyboard thay cho button Slack).
 
