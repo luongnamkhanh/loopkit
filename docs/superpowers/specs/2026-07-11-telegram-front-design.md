@@ -53,7 +53,8 @@ channel) và nằm trong workspace không kiểm soát được. Cần front đi
   # ponytail: không map message_id→thread — một người dùng hiếm khi refine 2 ticket song
   # song; khi nào cấn thật thì thêm reply-to routing.
 - Draft flow như Slack: draft qua gate `parse_ticket`+AST trước khi post, nút
-  `[▶️ Run] [✏️ Góp ý] [🚫 Huỷ]` (inline keyboard thay cho button Slack).
+  `[▶️ Run] [🚫 Huỷ]` — KHÔNG có nút góp ý: góp ý = nhắn tin thường (status
+  `ticket_drafted` cũng tính là chờ-input trong luật routing → redraft).
 
 ### 4. Door — inline keyboard + durable doors reuse nguyên
 
