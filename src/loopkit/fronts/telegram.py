@@ -6,7 +6,7 @@ Trust boundary: chỉ nhận update từ LOOPKIT_TG_CHAT_ID — còn lại drop 
 Door kiểu suspend (persist rồi trả False) → nút Approve xử lý ở poll kế tiếp,
 kể cả sau restart (doors.json + finish_suspended, §8.1 reuse nguyên).
 """
-import json, time, urllib.request
+import http.client, json, pathlib, time, urllib.request
 
 from loopkit import config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
@@ -37,7 +37,7 @@ class TgApi:
             if not isinstance(out, dict):        # JSON hợp lệ nhưng không phải dict (proxy/CDN lỗi)
                 return None
             return out.get("result") if out.get("ok") else None
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             return None
 
     def get_updates(self, offset: int) -> list:
@@ -68,12 +68,11 @@ def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api):
                                "dod": dod, "deliver": deliver_path, "repo": repo,
                                "workspace": ws, "tests": tests})
         dline = f"\n📦 Deliver: {deliver_path}" if deliver_path else ""
-        mid = api.send(f"🚪 Artifact chờ duyệt:{dline}\n{_mask((artifact or '')[:2500])}",
-                       keyboard=[[{"text": "✅ Approve", "callback_data": f"door:yes:{thread}"},
-                                  {"text": "🚫 Reject", "callback_data": f"door:no:{thread}"}]])
+        api.send(f"🚪 Artifact chờ duyệt:{dline}\n{_mask((artifact or '')[:2500])}",
+                keyboard=[[{"text": "✅ Approve", "callback_data": f"door:yes:{thread}"},
+                           {"text": "🚫 Reject", "callback_data": f"door:no:{thread}"}]])
         # KHÔNG set status ở đây: run_loop sẽ register "done" ngay sau khi door trả False
         # (tiền lệ cli.make_suspend_door) — doors.json mới là nguồn chân lý cho "awaiting".
-        mem.register(thread, door_msg=mid)
         return False
     return door
 
@@ -240,20 +239,25 @@ def main() -> int:
               "https://api.telegram.org/bot<TOKEN>/getUpdates → message.chat.id")
         return 1
     mem = Memory(config.MEMORY_DIR)
+    shield.init_dedupe(pathlib.Path(config.MEMORY_DIR) / "events.seen")   # §8.1: dedupe bền qua restart
     dead = mem.reap_running()                            # 'running' lúc boot = run đã chết
     if dead:
         print(f"[loopkit] reaped {len(dead)} interrupted run(s): {', '.join(dead)}")
     api = TgApi(config.TG_TOKEN)
     print("🤖 loopkit-telegram polling… (Ctrl-C để dừng)")
     offset = 0
-    while True:
-        updates = api.get_updates(offset)
-        if not updates:
-            time.sleep(1)                                # backoff nhẹ khi lỗi mạng/không có gì
-            continue
-        for u in updates:
-            offset = max(offset, u.get("update_id", 0) + 1)
-            try:
-                handle_update(u, mem, api)
-            except Exception as e:                       # một update hỏng không giết bot
-                api.send(_mask(f"💥 error: {e}"))
+    try:
+        while True:
+            updates = api.get_updates(offset)
+            if not updates:
+                time.sleep(1)                            # backoff nhẹ khi lỗi mạng/không có gì
+                continue
+            for u in updates:
+                offset = max(offset, u.get("update_id", 0) + 1)
+                try:
+                    handle_update(u, mem, api)
+                except Exception as e:                   # một update hỏng không giết bot
+                    api.send(_mask(f"💥 error: {e}"))
+    except KeyboardInterrupt:
+        print("bye")
+        return 0

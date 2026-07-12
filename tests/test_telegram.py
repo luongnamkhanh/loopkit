@@ -159,7 +159,6 @@ def test_launch_ticket_wires_ticket_and_suspend_door(monkeypatch, tmp_path):
     door = mem.doors["tg-9"]
     assert door["channel"] == "telegram" and door["artifact"] == "ARTIFACT"
     assert set(door) >= {"goal", "dod", "deliver", "repo", "workspace", "tests"}
-    assert mem.reg["tg-9"]["door_msg"]                   # message_id lưu để gỡ nút
     assert any(k for _, k in api.sent if k)              # có message kèm keyboard Approve
 
 
@@ -347,3 +346,47 @@ def test_main_poll_loop_offset_and_error_isolation(monkeypatch):
     assert handled == [7, 9]                    # update hỏng không giết bot
     assert holder["api"].offsets == [0, 10]     # offset-ack = max(update_id)+1
     assert any("error" in s for s in holder["api"].notified)  # 💥 notify masked
+
+
+def test_handle_update_foreign_callback_dropped(monkeypatch):
+    monkeypatch.setattr(config, "TG_CHAT_ID", "111")
+    monkeypatch.setattr(tg.shield, "seen_event", lambda i: False)
+    api, mem = FakeTgApi(), MemStub()
+    called = []
+    monkeypatch.setattr(tg, "handle_callback", lambda *a: called.append(1))
+    cb = {"id": "x", "data": "door:yes:t", "from": {"id": 1},
+          "message": {"message_id": 3, "chat": {"id": 666}}}
+    tg.handle_update({"update_id": 2, "callback_query": cb}, mem, api)
+    assert not called and not api.sent
+
+
+def test_main_boot_inits_durable_dedupe(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TG_TOKEN", "TOK")
+    monkeypatch.setattr(config, "TG_CHAT_ID", "111")
+    monkeypatch.setattr(config, "ENABLE_MEMORY", True)
+    monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+    inited = []
+    monkeypatch.setattr(tg.shield, "init_dedupe", lambda p: inited.append(str(p)))
+
+    class Stop(Exception):
+        ...
+
+    class FakeApi:
+        def __init__(self, token):
+            ...
+
+        def get_updates(self, offset):
+            raise Stop()
+
+        def send(self, *a, **k):
+            ...
+
+    class RMem2(MemStub):
+        def reap_running(self):
+            return []
+
+    monkeypatch.setattr(tg, "TgApi", FakeApi)
+    monkeypatch.setattr(tg, "Memory", lambda d: RMem2())
+    with pytest.raises(Stop):
+        tg.main()
+    assert inited and inited[0].endswith("events.seen")
