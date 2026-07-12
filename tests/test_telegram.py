@@ -1,6 +1,8 @@
 import io
 import json
 
+import pytest
+
 from loopkit import config
 from loopkit.fronts import telegram as tg
 
@@ -296,3 +298,52 @@ def test_main_requires_env(monkeypatch, capsys):
     monkeypatch.setattr(config, "TG_CHAT_ID", "")
     assert tg.main() == 1
     assert "LOOPKIT_TG_TOKEN" in capsys.readouterr().out
+
+
+def test_main_poll_loop_offset_and_error_isolation(monkeypatch):
+    monkeypatch.setattr(config, "TG_TOKEN", "TOK")
+    monkeypatch.setattr(config, "TG_CHAT_ID", "111")
+    monkeypatch.setattr(config, "ENABLE_MEMORY", True)
+
+    class Stop(Exception):
+        ...
+
+    class FakeApi:
+        def __init__(self, token):
+            self.offsets = []
+            self.notified = []
+
+        def get_updates(self, offset):
+            self.offsets.append(offset)
+            if len(self.offsets) == 1:
+                return [{"update_id": 7}, {"update_id": 9}]
+            raise Stop()                               # thoát vòng while True cho test
+
+        def send(self, text, reply_to=None, keyboard=None):
+            self.notified.append(text)
+
+    holder = {}
+
+    def fake_ctor(token):
+        holder["api"] = FakeApi(token)
+        return holder["api"]
+
+    class RMem(MemStub):
+        def reap_running(self):
+            return []
+
+    monkeypatch.setattr(tg, "TgApi", fake_ctor)
+    monkeypatch.setattr(tg, "Memory", lambda d: RMem())
+    handled = []
+
+    def fake_handle_update(u, mem, api):
+        handled.append(u["update_id"])
+        if u["update_id"] == 7:
+            raise RuntimeError("bad update")
+
+    monkeypatch.setattr(tg, "handle_update", fake_handle_update)
+    with pytest.raises(Stop):
+        tg.main()
+    assert handled == [7, 9]                    # update hỏng không giết bot
+    assert holder["api"].offsets == [0, 10]     # offset-ack = max(update_id)+1
+    assert any("error" in s for s in holder["api"].notified)  # 💥 notify masked
