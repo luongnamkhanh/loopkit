@@ -71,7 +71,9 @@ def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api):
         mid = api.send(f"🚪 Artifact chờ duyệt:{dline}\n{_mask((artifact or '')[:2500])}",
                        keyboard=[[{"text": "✅ Approve", "callback_data": f"door:yes:{thread}"},
                                   {"text": "🚫 Reject", "callback_data": f"door:no:{thread}"}]])
-        mem.register(thread, status="awaiting_approval", door_msg=mid)
+        # KHÔNG set status ở đây: run_loop sẽ register "done" ngay sau khi door trả False
+        # (tiền lệ cli.make_suspend_door) — doors.json mới là nguồn chân lý cho "awaiting".
+        mem.register(thread, door_msg=mid)
         return False
     return door
 
@@ -94,7 +96,7 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     api.send(_mask(f"🧩 Nhận ticket.\nGoal: {goal}\nDoD: {dod}"))
     ws_key = f"{repo_name}-{thread}" if repo_name else thread
     wd, kind = make_workspace(ws_key, repo=repo_path)
-    recalled = bool(mem.recall(goal, dod) is not None)
+    recalled = mem.recall(goal, dod) is not None
     if recalled:
         verifier, frozen_tests = gates.make_compile_gate(wd), ""   # unused: run_loop recall trước
     elif tests_src:

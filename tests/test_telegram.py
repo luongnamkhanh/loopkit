@@ -157,6 +157,15 @@ def test_launch_ticket_wires_ticket_and_suspend_door(monkeypatch, tmp_path):
     door = mem.doors["tg-9"]
     assert door["channel"] == "telegram" and door["artifact"] == "ARTIFACT"
     assert set(door) >= {"goal", "dod", "deliver", "repo", "workspace", "tests"}
-    assert mem.reg["tg-9"]["status"] == "awaiting_approval"
     assert mem.reg["tg-9"]["door_msg"]                   # message_id lưu để gỡ nút
     assert any(k for _, k in api.sent if k)              # có message kèm keyboard Approve
+
+
+def test_launch_ticket_repos_pending_fails_closed(monkeypatch):
+    monkeypatch.setattr(config, "REPOS", {"iac": "/x"})
+    monkeypatch.setattr(config, "REPOS_PENDING", {"iac"})
+    api, mem = FakeTgApi(), MemStub()
+    called = []
+    monkeypatch.setattr(tg, "run_loop", lambda *a, **k: called.append(1))
+    tg.launch_ticket("goal Repo: iac DoD: WHEN x SHALL y", "tg-2", mem, api)
+    assert not called and any("domain gate" in t for t, _ in api.sent)
