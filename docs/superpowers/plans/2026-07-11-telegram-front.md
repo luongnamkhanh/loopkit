@@ -137,6 +137,8 @@ class TgApi:
         try:
             with urllib.request.urlopen(req, timeout=http_timeout) as r:
                 out = json.loads(r.read().decode())
+            if not isinstance(out, dict):        # JSON hợp lệ nhưng không phải dict (proxy/CDN lỗi)
+                return None
             return out.get("result") if out.get("ok") else None
         except (OSError, ValueError):
             return None
@@ -181,7 +183,7 @@ git commit -m "telegram front: TgApi stdlib wrapper + TG_TOKEN/TG_CHAT_ID knobs"
 
 **Interfaces:**
 - Consumes: `TgApi` (Task 1); engine/gates/deliver/workspace theo Global Constraints.
-- Produces: `launch_ticket(text: str, thread: str, mem, api) -> None` — parse Repo/Deliver/ticket, allowlist fail-closed TRƯỚC mọi LLM call, workspace, verifier+frozen_tests, freeze deliver (skip khi recall), `run_loop` với door suspend. `make_tg_door(mem, thread, goal, dod, deliver, repo, ws, tests, api)` — door persist payload keys `channel/artifact/goal/dod/deliver/repo/workspace/tests` (đúng bộ `finish_suspended` đọc) + `mem.register(thread, status="awaiting_approval", door_msg=<message_id>)`, trả False.
+- Produces: `launch_ticket(text: str, thread: str, mem, api) -> None` — parse Repo/Deliver/ticket, allowlist fail-closed TRƯỚC mọi LLM call, workspace, verifier+frozen_tests, freeze deliver (skip khi recall), `run_loop` với door suspend. `make_tg_door(mem, thread, goal, dod, deliver, repo, ws, tests, api)` — door persist payload keys `channel/artifact/goal/dod/deliver/repo/workspace/tests` (đúng bộ `finish_suspended` đọc) + `mem.register(thread, door_msg=<message_id>)` (không set status — run_loop sẽ đè; doors.json là nguồn chân lý), trả False.
 
 - [ ] **Step 1: Write the failing tests** (append)
 
@@ -272,7 +274,6 @@ def test_launch_ticket_wires_ticket_and_suspend_door(monkeypatch, tmp_path):
     door = mem.doors["tg-9"]
     assert door["channel"] == "telegram" and door["artifact"] == "ARTIFACT"
     assert set(door) >= {"goal", "dod", "deliver", "repo", "workspace", "tests"}
-    assert mem.reg["tg-9"]["status"] == "awaiting_approval"
     assert mem.reg["tg-9"]["door_msg"]                   # message_id lưu để gỡ nút
     assert any(k for _, k in api.sent if k)              # có message kèm keyboard Approve
 ```
@@ -292,7 +293,9 @@ def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api):
         mid = api.send(f"🚪 Artifact chờ duyệt:{dline}\n{_mask((artifact or '')[:2500])}",
                        keyboard=[[{"text": "✅ Approve", "callback_data": f"door:yes:{thread}"},
                                   {"text": "🚫 Reject", "callback_data": f"door:no:{thread}"}]])
-        mem.register(thread, status="awaiting_approval", door_msg=mid)
+        # KHÔNG set status ở đây: run_loop sẽ register "done" ngay sau khi door trả False
+        # (tiền lệ cli.make_suspend_door) — doors.json mới là nguồn chân lý cho "awaiting".
+        mem.register(thread, door_msg=mid)
         return False
     return door
 
@@ -315,7 +318,7 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     api.send(_mask(f"🧩 Nhận ticket.\nGoal: {goal}\nDoD: {dod}"))
     ws_key = f"{repo_name}-{thread}" if repo_name else thread
     wd, kind = make_workspace(ws_key, repo=repo_path)
-    recalled = bool(mem.recall(goal, dod) is not None)
+    recalled = mem.recall(goal, dod) is not None
     if recalled:
         verifier, frozen_tests = gates.make_compile_gate(wd), ""   # unused: run_loop recall trước
     elif tests_src:
