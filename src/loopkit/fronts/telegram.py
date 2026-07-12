@@ -34,6 +34,8 @@ class TgApi:
         try:
             with urllib.request.urlopen(req, timeout=http_timeout) as r:
                 out = json.loads(r.read().decode())
+            if not isinstance(out, dict):        # JSON hợp lệ nhưng không phải dict (proxy/CDN lỗi)
+                return None
             return out.get("result") if out.get("ok") else None
         except (OSError, ValueError):
             return None

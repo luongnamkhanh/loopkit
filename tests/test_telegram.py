@@ -45,3 +45,27 @@ def test_tgapi_send_returns_message_id_and_truncates(monkeypatch):
     _, body, _ = calls[0]
     assert body["chat_id"] == "111" and len(body["text"]) == 4000
     assert body["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "d"
+
+
+def test_tgapi_non_dict_json_returns_none(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tg.urllib.request, "urlopen", _fake_urlopen([1, 2, 3], calls))
+    api = tg.TgApi("TOK")
+    assert api.get_updates(0) == []              # không raise, không nổ AttributeError
+    assert api.send("hi") is None
+
+
+def test_tgapi_answer_callback_and_clear_buttons_request_shape(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tg.urllib.request, "urlopen",
+                        _fake_urlopen({"ok": True, "result": True}, calls))
+    monkeypatch.setattr(config, "TG_CHAT_ID", "111")
+    api = tg.TgApi("TOK")
+    api.answer_callback("cb9", "x" * 300)
+    url, body, _ = calls[0]
+    assert "answerCallbackQuery" in url and body["callback_query_id"] == "cb9"
+    assert len(body["text"]) == 190              # cắt 190 chars theo giới hạn Telegram
+    api.clear_buttons(55)
+    url, body, _ = calls[1]
+    assert "editMessageReplyMarkup" in url and body["message_id"] == 55
+    assert body["reply_markup"] == {"inline_keyboard": []}
