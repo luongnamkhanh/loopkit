@@ -127,3 +127,54 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
         api.send(f"{status} (worker={res.get('worker')}, turns={res.get('turns')})")
     else:
         api.send(f"❌ {res.get('reason')}")
+
+
+_AWAITING = ("refining", "ticket_drafted")     # cả hai đều nhận message trần làm input
+
+
+def refine_step(thread: str, answer, mem, api) -> None:
+    if answer is not None:
+        if mem.get_run(thread).get("status") == "ticket_drafted":   # góp ý -> redraft
+            mem.register(thread, status="refining")
+        mem.append_event(thread, {"stage": "refine", "role": "user", "text": _mask(answer)})
+    run = mem.get_run(thread)
+    history = [{"role": e["role"], "text": e["text"]}
+               for e in mem.events(thread) if e.get("stage") == "refine"]
+    repos = ({"active": sorted(config.REPOS), "pending": sorted(config.REPOS_PENDING)}
+             if config.REPOS else None)
+    kind, text = refine.refine_turn(run.get("idea", ""), history,
+                                    run.get("refine_turns", 0), config.REFINE_MAX_TURNS,
+                                    repos=repos)
+    if kind == "error":
+        api.send("💥 refinement lỗi — gửi lại tin nhắn.")
+        return
+    if kind == "ask":
+        mem.append_event(thread, {"stage": "refine", "role": "analyst", "text": _mask(text)})
+        mem.register(thread, refine_turns=run.get("refine_turns", 0) + 1)
+        api.send(f"❓ {_mask(text)}")
+        return
+    mem.register(thread, status="ticket_drafted", draft=text)
+    warn = "\n⚠️ Tests trong draft chưa hợp lệ — run sẽ derive từ DoD." \
+        if kind == "draft_unvalidated" else ""
+    api.send(f"🎫 Draft:{warn}\n{_mask(text[:2500])}\n\n(góp ý = nhắn tin thường)",
+             keyboard=[[{"text": "▶️ Run", "callback_data": f"draft:run:{thread}"},
+                        {"text": "🚫 Huỷ", "callback_data": f"draft:cancel:{thread}"}]])
+
+
+def handle_message(msg: dict, mem, api) -> None:
+    text = (msg.get("text") or "").strip()
+    _, stripped = gates.parse_repo(text)
+    _, dod, _ = gates.parse_ticket(gates.parse_deliver(stripped)[1])
+    if dod:
+        launch_ticket(text, f"tg-{msg['message_id']}", mem, api)
+        return
+    awaiting = [t for t, r in mem.runs().items() if r.get("status") in _AWAITING]
+    if len(awaiting) == 1:                               # luật 1: answer
+        refine_step(awaiting[0], text, mem, api)
+    elif not awaiting:                                   # luật 2: idea mới
+        thread = f"tg-{msg['message_id']}"
+        mem.register(thread, status="refining", idea=_mask(text[:500]), refine_turns=0)
+        refine_step(thread, None, mem, api)
+    else:                                                # luật 3: mơ hồ -> từ chối
+        api.send("⚠️ Đang có ≥2 ticket chờ trả lời — chốt bớt một cái đã.")
+    # ponytail: không map message_id→thread; khi nào cấn 2 ticket song song thật thì thêm.

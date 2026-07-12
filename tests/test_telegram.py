@@ -169,3 +169,50 @@ def test_launch_ticket_repos_pending_fails_closed(monkeypatch):
     monkeypatch.setattr(tg, "run_loop", lambda *a, **k: called.append(1))
     tg.launch_ticket("goal Repo: iac DoD: WHEN x SHALL y", "tg-2", mem, api)
     assert not called and any("domain gate" in t for t, _ in api.sent)
+
+
+def test_handle_message_dod_launches_ticket(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    seen = {}
+    monkeypatch.setattr(tg, "launch_ticket", lambda text, th, m, a: seen.update(t=text, th=th))
+    tg.handle_message({"message_id": 5, "text": "goal DoD: WHEN x SHALL y"}, mem, api)
+    assert seen["th"] == "tg-5" and "DoD:" in seen["t"]
+
+
+def test_handle_message_three_routing_rules(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    routed = []
+    monkeypatch.setattr(tg, "refine_step",
+                        lambda th, ans, m, a: routed.append((th, ans)))
+    # luật 2: không thread chờ-input -> idea MỚI (answer=None, thread mới đăng ký)
+    tg.handle_message({"message_id": 1, "text": "make a widget"}, mem, api)
+    assert routed[-1] == ("tg-1", None) and mem.reg["tg-1"]["status"] == "refining"
+    # luật 1: đúng MỘT thread chờ-input -> message trần là ANSWER
+    tg.handle_message({"message_id": 2, "text": "option B"}, mem, api)
+    assert routed[-1] == ("tg-1", "option B")
+    # ticket_drafted cũng tính là chờ-input (góp ý trên draft)
+    mem.reg["tg-1"]["status"] = "ticket_drafted"
+    tg.handle_message({"message_id": 3, "text": "thêm case None"}, mem, api)
+    assert routed[-1] == ("tg-1", "thêm case None")
+    # luật 3: >=2 thread chờ-input -> từ chối, không route
+    mem.register("tg-9", status="refining")
+    n = len(routed)
+    tg.handle_message({"message_id": 4, "text": "answer nào?"}, mem, api)
+    assert len(routed) == n and any("chốt bớt" in t for t, _ in api.sent)
+
+
+def test_refine_step_ask_then_draft(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    mem.register("tg-1", status="refining", idea="widget", refine_turns=0)
+    monkeypatch.setattr(tg.refine, "refine_turn",
+                        lambda idea, h, t, mx, repos=None: ("ask", "Câu hỏi 1?"))
+    tg.refine_step("tg-1", None, mem, api)
+    assert any("Câu hỏi 1?" in t for t, _ in api.sent)
+    assert mem.reg["tg-1"]["refine_turns"] == 1
+    monkeypatch.setattr(tg.refine, "refine_turn",
+                        lambda idea, h, t, mx, repos=None: ("draft", "g DoD: d"))
+    tg.refine_step("tg-1", "trả lời", mem, api)
+    assert mem.reg["tg-1"]["status"] == "ticket_drafted"
+    assert mem.evts["tg-1"][-1]["role"] == "user"        # answer được ghi vào history disk
+    text, kb = api.sent[-1]
+    assert "Draft" in text and kb[0][0]["callback_data"] == "draft:run:tg-1"
