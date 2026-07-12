@@ -391,3 +391,25 @@ def test_main_boot_inits_durable_dedupe(monkeypatch, tmp_path):
     with pytest.raises(Stop):
         tg.main()
     assert inited and inited[0].endswith("events.seen")
+
+
+def test_handle_message_status_command(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    mem.register("tg-1", status="refining", idea="widget A")
+    mem.register("tg-2", status="done", goal="goal B")
+    mem.door_open("tg-2", {"artifact": "x"})
+    routed = []
+    monkeypatch.setattr(tg, "refine_step", lambda *a: routed.append(1))
+    tg.handle_message({"message_id": 9, "text": "/status"}, mem, api)
+    out = api.sent[-1][0]
+    assert "tg-1" in out and "refining" in out and "widget A" in out
+    assert "🚪" in out                        # door đang mở được đánh dấu
+    assert not routed                          # không rơi vào idea routing
+
+
+def test_handle_message_unknown_slash_command(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    routed = []
+    monkeypatch.setattr(tg, "refine_step", lambda *a: routed.append(1))
+    tg.handle_message({"message_id": 9, "text": "/start"}, mem, api)
+    assert not routed and any("/status" in t for t, _ in api.sent)

@@ -55,7 +55,7 @@ gate re-run on the moved files, committed on `feat/<module>`, pushed, MR created
   restart still completes the run. Multi-repo routing via `Repo: <name>` against the
   `LOOPKIT_REPOS` allowlist. Run with `loopkit-slack` (`SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env).
 - **Telegram** — message the bot directly (no mention needed): a ticket with `DoD:` runs it,
-  anything else starts idea refinement; door is an inline **Approve/Reject** keyboard. Zero
+  anything else starts idea refinement (`/status` lists runs); door is an inline **Approve/Reject** keyboard. Zero
   extra deps. Run `loopkit-telegram` with `LOOPKIT_TG_TOKEN` (BotFather) +
   `LOOPKIT_TG_CHAT_ID` (your chat — everything else is silently dropped).
 

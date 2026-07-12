@@ -162,6 +162,19 @@ def refine_step(thread: str, answer, mem, api) -> None:
 
 def handle_message(msg: dict, mem, api) -> None:
     text = (msg.get("text") or "").strip()
+    if text.startswith("/"):                             # lệnh — không bao giờ là idea/ticket
+        if text.split()[0].split("@")[0] == "/status":
+            runs = sorted(mem.runs().items(),
+                          key=lambda kv: kv[1].get("updated_at", 0), reverse=True)[:10]
+            if not runs:
+                api.send("(chưa có run nào)")
+                return
+            lines = [f"{'🚪' if mem.door_get(t) else '·'} {t} · {r.get('status', '?')} · "
+                     f"{(r.get('goal') or r.get('idea') or '')[:48]}" for t, r in runs]
+            api.send("\n".join(lines))
+        else:
+            api.send("Lệnh không biết — chỉ có /status. (idea/ticket thì nhắn thường)")
+        return
     _, stripped = gates.parse_repo(text)
     _, dod, _ = gates.parse_ticket(gates.parse_deliver(stripped)[1])
     if dod:
