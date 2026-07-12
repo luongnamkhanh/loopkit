@@ -15,6 +15,7 @@ slack = ["slack-bolt>=1.18", "slack-sdk>=3.26"]
 [project.scripts]
 loopkit = "loopkit.fronts.cli:main"
 loopkit-slack = "loopkit.fronts.slack:main"
+loopkit-telegram = "loopkit.fronts.telegram:main"
 
 # reserved cho P3 (plugin gate/role bên thứ ba, pattern pytest):
 # [project.entry-points."loopkit.plugins"]

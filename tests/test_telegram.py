@@ -261,3 +261,38 @@ def test_callback_draft_cancel_and_malformed(monkeypatch):
     assert mem.reg["tg-1"]["status"] == "refine_cancelled"
     tg.handle_callback(_cb("garbage"), mem, api)         # không nổ
     assert api.answered                                   # vẫn answer để Telegram tắt spinner
+
+
+def test_handle_update_chat_id_gate_silent_drop(monkeypatch):
+    monkeypatch.setattr(config, "TG_CHAT_ID", "111")
+    monkeypatch.setattr(tg.shield, "seen_event", lambda i: False)
+    api, mem = FakeTgApi(), MemStub()
+    called = []
+    monkeypatch.setattr(tg, "handle_message", lambda *a: called.append(1))
+    tg.handle_update({"update_id": 1, "message":
+                      {"message_id": 2, "text": "hi", "chat": {"id": 666}}}, mem, api)
+    assert not called and not api.sent                   # drop IM LẶNG — không reply
+
+
+def test_handle_update_routes_and_dedupes(monkeypatch):
+    monkeypatch.setattr(config, "TG_CHAT_ID", "111")
+    seen = set()
+    monkeypatch.setattr(tg.shield, "seen_event",
+                        lambda i: i in seen or seen.add(i) or False)
+    api, mem = FakeTgApi(), MemStub()
+    msgs, cbs = [], []
+    monkeypatch.setattr(tg, "handle_message", lambda m, *a: msgs.append(m))
+    monkeypatch.setattr(tg, "handle_callback", lambda c, *a: cbs.append(c))
+    u = {"update_id": 5, "message": {"message_id": 2, "text": "hi", "chat": {"id": 111}}}
+    tg.handle_update(u, mem, api)
+    tg.handle_update(u, mem, api)                        # gửi lại sau restart -> dedupe
+    assert len(msgs) == 1
+    tg.handle_update({"update_id": 6, "callback_query": _cb("door:yes:t")}, mem, api)
+    assert len(cbs) == 1
+
+
+def test_main_requires_env(monkeypatch, capsys):
+    monkeypatch.setattr(config, "TG_TOKEN", "")
+    monkeypatch.setattr(config, "TG_CHAT_ID", "")
+    assert tg.main() == 1
+    assert "LOOPKIT_TG_TOKEN" in capsys.readouterr().out

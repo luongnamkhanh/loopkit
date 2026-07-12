@@ -217,3 +217,43 @@ def handle_callback(cb: dict, mem, api) -> None:
             api.answer_callback(cb.get("id", ""), "đã huỷ")
             return
     api.answer_callback(cb.get("id", ""), "stale")
+
+
+def handle_update(u: dict, mem, api) -> None:
+    if shield.seen_event(f"tg-{u.get('update_id')}"):    # Telegram re-delivers sau restart
+        return
+    msg, cb = u.get("message"), u.get("callback_query")
+    chat = (msg or {}).get("chat") or ((cb or {}).get("message") or {}).get("chat") or {}
+    if str(chat.get("id", "")) != config.TG_CHAT_ID:     # trust boundary: drop im lặng
+        return
+    if cb:
+        handle_callback(cb, mem, api)
+    elif msg and (msg.get("text") or "").strip():
+        handle_message(msg, mem, api)
+
+
+def main() -> int:
+    if not (config.TG_TOKEN and config.TG_CHAT_ID and config.ENABLE_MEMORY):
+        print("❌ cần LOOPKIT_TG_TOKEN + LOOPKIT_TG_CHAT_ID (+ LOOPKIT_ENABLE_MEMORY=1).\n"
+              "   token: @BotFather /newbot\n"
+              "   chat_id: nhắn bot một câu rồi curl "
+              "https://api.telegram.org/bot<TOKEN>/getUpdates → message.chat.id")
+        return 1
+    mem = Memory(config.MEMORY_DIR)
+    dead = mem.reap_running()                            # 'running' lúc boot = run đã chết
+    if dead:
+        print(f"[loopkit] reaped {len(dead)} interrupted run(s): {', '.join(dead)}")
+    api = TgApi(config.TG_TOKEN)
+    print("🤖 loopkit-telegram polling… (Ctrl-C để dừng)")
+    offset = 0
+    while True:
+        updates = api.get_updates(offset)
+        if not updates:
+            time.sleep(1)                                # backoff nhẹ khi lỗi mạng/không có gì
+            continue
+        for u in updates:
+            offset = max(offset, u.get("update_id", 0) + 1)
+            try:
+                handle_update(u, mem, api)
+            except Exception as e:                       # một update hỏng không giết bot
+                api.send(_mask(f"💥 error: {e}"))

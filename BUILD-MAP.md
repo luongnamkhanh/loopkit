@@ -78,6 +78,14 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 | Socket transport resilience | 🟡 ❗ | ops gap found live (BrokenPipe spam): prefer `websocket_client` adapter, fallback builtin; door restart-safety ✅ (§8.1); mid-generation kills stay `interrupted` (accepted) |
 | Recall (cache-hit) re-approve → re-deliver | ⬜ | controller addition — gap discovered in Task 6 review: recall path (cache-hit + re-approve) does NOT re-deliver — deliberate defer until live demand |
 
+## 7b · Telegram layer (front #4 — spec 2026-07-11)
+| Item | Status | Note |
+|---|---|---|
+| Long-poll intake + chat_id trust boundary | ✅ | stdlib urllib; update lạ drop im lặng; dedupe `shield.seen_event(tg-<update_id>)` |
+| Idea refinement Q&A | ✅ | 3 luật routing không state (trần+1 chờ-input = answer; trần+0 = idea mới; ≥2 = từ chối) — thứ chết ở Slack private channel chạy tự nhiên ở đây |
+| Door inline keyboard + durable doors | ✅ | suspend door, `finish_suspended` reuse §8.1; click sau restart OK; double-click guard = gỡ nút |
+| Sync, không threading | ✅ | ponytail: poll dừng khi generate — single user chấp nhận; thêm thread khi cấn thật |
+
 ## 8 · Hardening §8 (roof — deliberately after real tickets)
 §8.1 durable execution (✅ scoped door+dedupe) · §8.2 risk-classified gating (a `risky` flag
 exists; classification is manual) · §8.3 evaluator calibration · §8.4 golden set — rest ⬜ by
