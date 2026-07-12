@@ -178,3 +178,42 @@ def handle_message(msg: dict, mem, api) -> None:
     else:                                                # luật 3: mơ hồ -> từ chối
         api.send("⚠️ Đang có ≥2 ticket chờ trả lời — chốt bớt một cái đã.")
     # ponytail: không map message_id→thread; khi nào cấn 2 ticket song song thật thì thêm.
+
+
+def handle_callback(cb: dict, mem, api) -> None:
+    parts = (cb.get("data") or "").split(":", 2)
+    mid = ((cb.get("message") or {}).get("message_id"))
+    if len(parts) != 3:
+        api.answer_callback(cb.get("id", ""))
+        return
+    kind, action, thread = parts
+    if kind == "door":
+        door = mem.door_get(thread)
+        if not door:
+            api.answer_callback(cb.get("id", ""), "door không còn mở")
+            return
+        decision = action == "yes"
+        mem.audit(thread, approver=f"tg-{cb.get('from', {}).get('id', '?')}",
+                  decision=decision)
+        finish_suspended(mem, thread, door, decision, api.send)
+        mem.door_close(thread)
+        if mid:
+            api.clear_buttons(mid)                       # chống double-click
+        api.answer_callback(cb.get("id", ""), "✅ approved" if decision else "🚫 rejected")
+        return
+    if kind == "draft":
+        run = mem.get_run(thread)
+        if action == "run" and run.get("status") == "ticket_drafted" and run.get("draft"):
+            mem.register(thread, status="ticket_approved")
+            if mid:
+                api.clear_buttons(mid)
+            api.answer_callback(cb.get("id", ""), "chạy…")
+            launch_ticket(run["draft"], thread, mem, api)
+            return
+        if action == "cancel" and run.get("status") == "ticket_drafted":
+            mem.register(thread, status="refine_cancelled")
+            if mid:
+                api.clear_buttons(mid)
+            api.answer_callback(cb.get("id", ""), "đã huỷ")
+            return
+    api.answer_callback(cb.get("id", ""), "stale")

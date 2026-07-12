@@ -216,3 +216,48 @@ def test_refine_step_ask_then_draft(monkeypatch):
     assert mem.evts["tg-1"][-1]["role"] == "user"        # answer được ghi vào history disk
     text, kb = api.sent[-1]
     assert "Draft" in text and kb[0][0]["callback_data"] == "draft:run:tg-1"
+
+
+def _cb(data, mid=77):
+    return {"id": "cb1", "data": data, "from": {"id": 999},
+            "message": {"message_id": mid, "chat": {"id": 111}}}
+
+
+def test_callback_door_approve_finishes_and_clears(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    mem.door_open("tg-1", {"artifact": "A", "goal": "g", "dod": "d"})
+    fin = []
+    monkeypatch.setattr(tg, "finish_suspended",
+                        lambda m, t, p, dec, notify: fin.append((t, dec)))
+    tg.handle_callback(_cb("door:yes:tg-1"), mem, api)
+    assert fin == [("tg-1", True)]
+    assert "tg-1" not in mem.doors and api.cleared == [77]
+    assert mem.audits == [("tg-1", "tg-999", True)]
+
+
+def test_callback_door_stale_is_safe(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    called = []
+    monkeypatch.setattr(tg, "finish_suspended", lambda *a: called.append(1))
+    tg.handle_callback(_cb("door:yes:tg-nope"), mem, api)
+    assert not called and "không còn mở" in api.answered[-1][1]
+
+
+def test_callback_draft_run_launches_with_saved_draft(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    mem.register("tg-1", status="ticket_drafted", draft="g Repo: pipeline DoD: d")
+    seen = {}
+    monkeypatch.setattr(tg, "launch_ticket",
+                        lambda text, th, m, a: seen.update(t=text, th=th))
+    tg.handle_callback(_cb("draft:run:tg-1"), mem, api)
+    assert seen == {"t": "g Repo: pipeline DoD: d", "th": "tg-1"}
+    assert mem.reg["tg-1"]["status"] == "ticket_approved"
+
+
+def test_callback_draft_cancel_and_malformed(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    mem.register("tg-1", status="ticket_drafted", draft="x DoD: y")
+    tg.handle_callback(_cb("draft:cancel:tg-1"), mem, api)
+    assert mem.reg["tg-1"]["status"] == "refine_cancelled"
+    tg.handle_callback(_cb("garbage"), mem, api)         # không nổ
+    assert api.answered                                   # vẫn answer để Telegram tắt spinner
