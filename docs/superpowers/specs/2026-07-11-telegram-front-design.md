@@ -38,7 +38,7 @@ channel) và nằm trong workspace không kiểm soát được. Cần front đi
   `Memory.events.seen` (`tg-<update_id>`, cơ chế sẵn có của Slack event ids).
 - Update từ chat ≠ `TG_CHAT_ID` → drop im lặng (không reply, không log nội dung).
 - `message` → intake; `callback_query` → route theo prefix của `callback_data`:
-  `door:<thread>` (approve/reject — §4) | `draft:<run|edit|cancel>:<thread>` (§3).
+  `door:yes|no:<thread>` (§4) | `draft:run|cancel:<thread>` (§3 — không có edit, góp ý = message thường).
 
 ### 3. Intake & threading (chat tuyến tính — không có thread thật)
 

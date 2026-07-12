@@ -81,7 +81,7 @@ Legend: ✅ built & verified · 🟡 partial · ⬜ planned (deliberate defer) �
 ## 7b · Telegram layer (front #4 — spec 2026-07-11)
 | Item | Status | Note |
 |---|---|---|
-| Long-poll intake + chat_id trust boundary | ✅ | stdlib urllib; update lạ drop im lặng; dedupe `shield.seen_event(tg-<update_id>)` |
+| Long-poll intake + chat_id trust boundary | ✅ | stdlib urllib; update lạ drop im lặng; dedupe `shield.seen_event(tg-<update_id>)` bền qua restart (`init_dedupe` → `events.seen` lúc boot) |
 | Idea refinement Q&A | ✅ | 3 luật routing không state (trần+1 chờ-input = answer; trần+0 = idea mới; ≥2 = từ chối) — thứ chết ở Slack private channel chạy tự nhiên ở đây |
 | Door inline keyboard + durable doors | ✅ | suspend door, `finish_suspended` reuse §8.1; click sau restart OK; double-click guard = gỡ nút |
 | Sync, không threading | ✅ | ponytail: poll dừng khi generate — single user chấp nhận; thêm thread khi cấn thật |

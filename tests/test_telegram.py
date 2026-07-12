@@ -299,7 +299,8 @@ def test_main_requires_env(monkeypatch, capsys):
     assert "LOOPKIT_TG_TOKEN" in capsys.readouterr().out
 
 
-def test_main_poll_loop_offset_and_error_isolation(monkeypatch):
+def test_main_poll_loop_offset_and_error_isolation(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))   # không ghi events.seen thật
     monkeypatch.setattr(config, "TG_TOKEN", "TOK")
     monkeypatch.setattr(config, "TG_CHAT_ID", "111")
     monkeypatch.setattr(config, "ENABLE_MEMORY", True)
