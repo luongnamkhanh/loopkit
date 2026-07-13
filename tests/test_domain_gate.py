@@ -334,3 +334,36 @@ def test_cli_gate_ticket_wiring(tmp_path, monkeypatch, capsys):
     clif.cmd_run("y Gate: ./tests/run.sh DoD: WHEN a SHALL b")
     assert seen["t"].gate_cmd == "./tests/run.sh"
     assert "Gate" in capsys.readouterr().out
+
+
+def test_tg_pending_repo_deliver_dropped_with_warning_after_infer(tmp_path, monkeypatch):
+    repo, _, _ = make_edit_repo(tmp_path)
+    monkeypatch.setattr(tgf.config, "REPOS", {"deploy": str(repo)})
+    monkeypatch.setattr(tgf.config, "REPOS_PENDING", {"deploy"})
+    monkeypatch.setattr(tgf.config, "ENABLE_TOOLS", True)
+    monkeypatch.setattr(tgf.deliver, "infer_gate", lambda g, d, r: "helm lint c")
+    monkeypatch.setattr(tgf, "make_workspace", lambda th, repo=None: (str(tmp_path / "wd"), "worktree"))
+    seen = {}
+    monkeypatch.setattr(tgf, "run_loop", lambda t, **kw: seen.update(t=t) or
+                        {"ok": True, "approved": False, "worker": "code", "turns": 1})
+    api, mem = TgStub(), MStub()
+    tgf.launch_ticket("x Repo: deploy Deliver: a/b.py DoD: WHEN a SHALL b", "tg-9", mem, api)
+    assert seen["t"].gate_cmd == "helm lint c" and seen["t"].deliver is None
+    assert any("bỏ qua Deliver" in s for s in api.sent)    # KHÔNG drop im lặng
+
+
+def test_tg_pending_repo_explicit_gate_skips_infer(tmp_path, monkeypatch):
+    repo, _, _ = make_edit_repo(tmp_path)
+    monkeypatch.setattr(tgf.config, "REPOS", {"deploy": str(repo)})
+    monkeypatch.setattr(tgf.config, "REPOS_PENDING", {"deploy"})
+    monkeypatch.setattr(tgf.config, "ENABLE_TOOLS", True)
+    def no_infer(*a):
+        raise AssertionError("infer_gate must NOT be called when Gate: explicit")
+    monkeypatch.setattr(tgf.deliver, "infer_gate", no_infer)
+    monkeypatch.setattr(tgf, "make_workspace", lambda th, repo=None: (str(tmp_path / "wd2"), "worktree"))
+    seen = {}
+    monkeypatch.setattr(tgf, "run_loop", lambda t, **kw: seen.update(t=t) or
+                        {"ok": True, "approved": False, "worker": "code", "turns": 1})
+    api, mem = TgStub(), MStub()
+    tgf.launch_ticket("x Repo: deploy Gate: true DoD: WHEN a SHALL b", "tg-10", mem, api)
+    assert seen["t"].gate_cmd == "true"

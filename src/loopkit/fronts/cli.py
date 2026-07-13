@@ -59,9 +59,6 @@ def cmd_run(text: str, thread=None) -> int:
         print(f"⚠️ CLI bỏ qua 'Repo: {repo_name}' — cwd là repo đích.")
     deliver_path, text = gates.parse_deliver(text)
     gate_cmd, text = gates.parse_gate_cmd(text)
-    if gate_cmd and deliver_path:
-        print("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
-        deliver_path = None
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         print("🙅 Thiếu DoD. Cú pháp: loopkit run '<goal> DoD: <EARS> [Tests: <pytest>]'")
@@ -69,13 +66,17 @@ def cmd_run(text: str, thread=None) -> int:
     thread = thread or f"cli-{int(time.time() * 1000)}"
     mem = _mem()
     repo = _cwd_repo()
-    wd, kind = make_workspace(thread, repo=repo)
-    if kind == "worktree":
-        print(f"🌿 workspace = worktree {wd}")
     if gate_cmd:
         if not (repo and config.ENABLE_TOOLS):
             print("🙅 Gate: cần repo (cwd git) + LOOPKIT_ENABLE_TOOLS=1.")
             return 1
+    wd, kind = make_workspace(thread, repo=repo)
+    if kind == "worktree":
+        print(f"🌿 workspace = worktree {wd}")
+    if gate_cmd and deliver_path:
+        print("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
+        deliver_path = None
+    if gate_cmd:
         verifier, frozen_tests = gates.make_cmd_gate(gate_cmd, wd), ""
         pre_ok, _ = verifier("")
         gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"
@@ -222,23 +223,24 @@ def cmd_ticket_run(thread: str) -> int:
     repo_name, text = gates.parse_repo(draft)
     deliver_path, text = gates.parse_deliver(text)
     gate_cmd, text = gates.parse_gate_cmd(text)
-    if gate_cmd and deliver_path:
-        print("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
-        deliver_path = None
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         print("FAILED: draft không parse được DoD")
         return 1
-    mem.register(thread, status="ticket_approved")
     repo = _cwd_repo()
-    wd, kind = make_workspace(thread, repo=repo)
-    if kind == "worktree":
-        print(f"🌿 workspace = worktree {wd}")
-    gate_label = ""
     if gate_cmd:
         if not (repo and config.ENABLE_TOOLS):
             print("FAILED: Gate: cần repo (cwd git) + LOOPKIT_ENABLE_TOOLS=1")
             return 1
+    mem.register(thread, status="ticket_approved")
+    wd, kind = make_workspace(thread, repo=repo)
+    if kind == "worktree":
+        print(f"🌿 workspace = worktree {wd}")
+    gate_label = ""
+    if gate_cmd and deliver_path:
+        print("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
+        deliver_path = None
+    if gate_cmd:
         verifier, frozen_tests = gates.make_cmd_gate(gate_cmd, wd), ""
         pre_ok, _ = verifier("")
         gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"

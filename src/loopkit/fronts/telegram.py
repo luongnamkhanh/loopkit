@@ -88,9 +88,6 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     repo_name, text = gates.parse_repo(text)
     deliver_path, text = gates.parse_deliver(text)
     gate_cmd, text = gates.parse_gate_cmd(text)
-    if gate_cmd and deliver_path:
-        api.send("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
-        deliver_path = None
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         api.send("🙅 Thiếu DoD.")
@@ -107,14 +104,18 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
         else:
             api.send("🙅 repo này cần Gate: — mô tả cách verify trong ticket/idea")
             return
+    if gate_cmd and deliver_path:                          # Deliver: bị vô hiệu bởi gate AI-infer
+        api.send("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
+        deliver_path = None
+    if gate_cmd:
+        if not (repo_path and config.ENABLE_TOOLS):
+            api.send("🙅 Gate: cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
+            return
     api.send(_mask(f"🧩 Nhận ticket.\nGoal: {goal}\nDoD: {dod}"))
     ws_key = f"{repo_name}-{thread}" if repo_name else thread
     wd, kind = make_workspace(ws_key, repo=repo_path)
     gate_label = ""
     if gate_cmd:
-        if not (repo_path and config.ENABLE_TOOLS):
-            api.send("🙅 Gate: cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
-            return
         verifier, frozen_tests = gates.make_cmd_gate(gate_cmd, wd), ""
         pre_ok, _ = verifier("")
         gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"
