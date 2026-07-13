@@ -25,3 +25,13 @@ def test_make_cmd_gate_timeout_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(gates.subprocess, "run", boom)
     ok, detail = gates.make_cmd_gate("sleep 999", str(tmp_path))("")
     assert not ok and "timeout" in detail
+
+
+def test_parse_gate_cmd_ignores_prose_gate_inside_dod():
+    text = ("Repo: x\nDoD: WHEN user reaches the checkout gate: THEN system SHALL notify\n"
+            "Tests: pass")
+    cmd, rest = gates.parse_gate_cmd(text)
+    assert cmd is None and rest == text            # DoD nguyên vẹn, không nuốt gì
+    # token thật TRƯỚC DoD vẫn ăn, kể cả one-liner:
+    cmd, rest = gates.parse_gate_cmd("goal Gate: helm lint c DoD: WHEN a SHALL b")
+    assert cmd == "helm lint c" and "DoD: WHEN a SHALL b" in rest
