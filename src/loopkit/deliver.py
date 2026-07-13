@@ -46,7 +46,8 @@ def place_and_verify(workspace: str, deliver_path: str):
         tdst.write_text(src)
         tsrc_f.unlink()
         r = subprocess.run(["python3", "-m", "pytest", "-q", tdst.name],
-                           cwd=dst.parent, capture_output=True, text=True, timeout=120)
+                           cwd=dst.parent, capture_output=True, text=True, timeout=120,
+                           env={**os.environ, "LOOPKIT_NO_BRAIN": "1"})
         return r.returncode == 0, (r.stdout + r.stderr).strip()[-700:]
     r = subprocess.run(["python3", "-m", "py_compile", str(dst)],
                        capture_output=True, text=True, timeout=60)

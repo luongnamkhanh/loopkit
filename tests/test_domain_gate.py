@@ -397,3 +397,23 @@ def test_tg_pending_repo_explicit_gate_skips_infer(tmp_path, monkeypatch):
     api, mem = TgStub(), MStub()
     tgf.launch_ticket("x Repo: deploy Gate: true DoD: WHEN a SHALL b", "tg-10", mem, api)
     assert seen["t"].gate_cmd == "true"
+
+
+def test_cmd_gate_env_disables_brain(tmp_path):
+    ok, detail = gates.make_cmd_gate("echo brain=$LOOPKIT_NO_BRAIN", str(tmp_path))("")
+    assert ok and "brain=1" in detail          # gate context phải cấm brain
+
+
+def test_pytest_gate_env_disables_brain(tmp_path):
+    tests_src = ("import os\nfrom solution import x\n\n"
+                 "def test_env():\n    assert os.environ.get('LOOPKIT_NO_BRAIN') == '1'\n")
+    ok, detail = gates.make_pytest_gate(tests_src, str(tmp_path))("x = 1\n")
+    assert ok, detail
+
+
+def test_brains_short_circuit_under_no_brain(tmp_path, monkeypatch):
+    import loopkit.engine as eng
+    monkeypatch.setenv("LOOPKIT_NO_BRAIN", "1")
+    assert "LOOPKIT_NO_BRAIN" in eng.ask_claude("p", "s")
+    assert "LOOPKIT_NO_BRAIN" in eng.run_agent("p", "s", workdir=str(tmp_path),
+                                               tools=["Read"])

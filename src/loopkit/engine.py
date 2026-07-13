@@ -13,7 +13,7 @@ Cross-cutting (flow-level, shared — built once, not per role):
 Context assembly for a worker call = SOUL (roles.py) + AGENTS.md (project rules) + TICKET + feedback.
 Seams for a real project: Ticket.verifier, human_door, the roles registry, AGENTS.md.
 """
-import subprocess, re, json, pathlib, time, itertools
+import os, subprocess, re, json, pathlib, time, itertools
 from dataclasses import dataclass
 from typing import Callable, Optional
 from loopkit import config, shield
@@ -22,6 +22,8 @@ from loopkit.roles import REGISTRY, allowed_tools
 
 # ---------- brain ----------
 def ask_claude(prompt: str, soul: str, model: Optional[str] = None) -> str:
+    if os.environ.get("LOOPKIT_NO_BRAIN"):     # gate context: cấm brain — chống loop lồng nhau
+        return "LOOPKIT_NO_BRAIN: brain bị cấm trong gate context (test không hermetic?)"
     # Runs in a NEUTRAL cwd on purpose: the claude CLI auto-reads AGENTS.md/CLAUDE.md from its
     # cwd, which would DOUBLE-inject project context (we already inject it explicitly via
     # project_context). Neutral cwd keeps one source of truth and stays brain-agnostic.
@@ -39,6 +41,8 @@ def run_agent(prompt: str, soul: str, *, workdir, tools, model: Optional[str] = 
     Unlike ask_claude (neutral cwd, text-only): cwd IS the workspace — the agent reads/writes
     files there, and when the workspace is a real repo's worktree, claude natively picks up
     THAT repo's AGENTS.md/CLAUDE.md (callers should pass project_context='' in that case)."""
+    if os.environ.get("LOOPKIT_NO_BRAIN"):     # gate context: cấm brain — chống loop lồng nhau
+        return "LOOPKIT_NO_BRAIN: brain bị cấm trong gate context (test không hermetic?)"
     cmd = ["claude", "-p", f"{soul}\n\n{prompt}", "--allowedTools", ",".join(tools)]
     if model:
         cmd += ["--model", model]

@@ -11,7 +11,7 @@ The gate writes each artifact to `solution.py` and runs pytest against the froze
 `test_ticket.py` in an isolated per-ticket workdir. If the generator names things
 differently, the gate fails with an ImportError and the feedback loop corrects it.
 """
-import ast, pathlib, re, subprocess
+import ast, os, pathlib, re, subprocess
 from loopkit import config
 from loopkit.engine import ask_claude, extract_code
 
@@ -108,7 +108,8 @@ def make_cmd_gate(cmd: str, workdir: str):
     def verifier(artifact: str):
         try:
             r = subprocess.run(cmd, shell=True, cwd=workdir, capture_output=True,
-                               text=True, timeout=300)
+                               text=True, timeout=300,
+                               env={**os.environ, "LOOPKIT_NO_BRAIN": "1"})
         except subprocess.TimeoutExpired:
             return False, "gate timeout (300s)"
         except OSError as e:
@@ -137,7 +138,8 @@ def make_pytest_gate(tests_src: str, workdir: str):
     def verifier(artifact: str):
         (wd / "solution.py").write_text(artifact)
         r = subprocess.run(["python3", "-m", "pytest", "-q", "test_ticket.py"],
-                           cwd=wd, capture_output=True, text=True, timeout=120)
+                           cwd=wd, capture_output=True, text=True, timeout=120,
+                           env={**os.environ, "LOOPKIT_NO_BRAIN": "1"})
         return r.returncode == 0, (r.stdout + r.stderr).strip()[-700:]
     return verifier
 
