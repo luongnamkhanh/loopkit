@@ -110,3 +110,17 @@ def test_refine_repo_ctx_mentions_gate_for_pending():
                        repos={"active": ["pipeline"], "pending": ["deploy"]},
                        ask=lambda p, s, model=None: seen.update(p=p, s=s) or "QUESTION: q?")
     assert "Gate:" in seen["p"] or "Gate:" in seen["s"]
+
+
+def test_valid_draft_pending_repo_needs_gate():
+    repos = {"active": ["pipeline"], "pending": ["deploy"]}
+    good = "fix chart Repo: deploy Gate: helm lint charts/p DoD: WHEN x SHALL y"
+    bad = "fix chart Repo: deploy DoD: WHEN x SHALL y"
+    assert refine._valid_draft(good, repos) is True      # pending + Gate: OK, không cần Tests
+    assert refine._valid_draft(bad, repos) is False       # pending không Gate: vẫn từ chối
+
+
+def test_valid_draft_gate_replaces_tests_for_active_repo():
+    repos = {"active": ["pipeline"], "pending": []}
+    draft = "fix thing Repo: pipeline Gate: pytest DoD: WHEN a SHALL b"
+    assert refine._valid_draft(draft, repos) is True

@@ -31,10 +31,15 @@ def _parse_reply(reply: str):
 
 def _valid_draft(draft: str, repos=None) -> bool:
     name, rest = gates.parse_repo(draft)
-    if repos is not None and name is not None and name not in repos.get("active", []):
-        return False                                  # tên ngoài allowlist = fail gate
+    _, rest = gates.parse_deliver(rest)
+    gate_cmd, rest = gates.parse_gate_cmd(rest)
+    if repos is not None and name is not None:
+        active = repos.get("active", [])
+        pending = repos.get("pending", [])
+        if name not in active and not (name in pending and gate_cmd):
+            return False                     # pending chỉ hợp lệ khi draft có Gate:
     goal, dod, tests = gates.parse_ticket(rest)
-    return bool(goal and dod and tests)
+    return bool(goal and dod and (tests or gate_cmd))   # edit-mode draft: Gate thay Tests
 
 
 def refine_turn(idea, history, turns_used, max_turns, repos=None, ask=ask_claude):
@@ -49,9 +54,8 @@ def refine_turn(idea, history, turns_used, max_turns, repos=None, ask=ask_claude
     if repos:
         repo_ctx = ("\nAVAILABLE REPOS — the ticket SHOULD include 'Repo: <name>':\n"
                     f"  active: {', '.join(repos.get('active', [])) or '(none)'}\n"
-                    f"  pending (registered, NOT usable yet — never pick these): "
-                    f"{', '.join(repos.get('pending', [])) or '(none)'}\n"
-                    "  pending repos REQUIRE a Gate: line in the ticket\n")
+                    f"  pending (usable ONLY with a `Gate: <one shell command>` line in the "
+                    f"ticket): {', '.join(repos.get('pending', [])) or '(none)'}\n")
     prompt = (f"RAW IDEA:\n{idea}\n\nCONVERSATION SO FAR:\n{convo or '(none)'}\n{repo_ctx}\n"
               + ("QUESTION BUDGET EXHAUSTED: output the TICKET now; state assumptions in the goal."
                  if forced else f"Questions used: {turns_used}/{max_turns}."))
@@ -74,7 +78,8 @@ def refine_turn(idea, history, turns_used, max_turns, repos=None, ask=ask_claude
         _, text = _parse_reply(ask(
             f"{prompt}\n\nYour draft FAILED the format gate. Required: '<goal> DoD: <EARS "
             f"criteria> Tests: ```python ...```' — tests import from `solution`, define test_* "
-            f"functions; if a 'Repo:' name is present it MUST be one of the active repos. "
-            f"Output the corrected TICKET.\n\nPREVIOUS DRAFT:\n{text}",
+            f"functions; if a 'Repo:' name is present it MUST be an active repo, OR a pending "
+            f"repo WITH a `Gate: <shell command>` line (edit-mode drafts need Goal+DoD+Gate, no "
+            f"Tests). Output the corrected TICKET.\n\nPREVIOUS DRAFT:\n{text}",
             soul, model=model))
     return ("draft", text) if _valid_draft(text, repos) else ("draft_unvalidated", text)
