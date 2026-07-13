@@ -86,6 +86,33 @@ def parse_deliver(text: str):
     return m.group(1), (text[:m.start()] + text[m.end():]).strip()
 
 
+_GATE_RE = re.compile(r"(?i)\bgate:\s*([^\n]+)")
+
+
+def parse_gate_cmd(text: str):
+    """'Gate: <lệnh đến hết dòng>' -> (cmd, text đã strip). Không có -> (None, text).
+    Gate: có mặt = ticket chạy edit-in-place mode (spec 2026-07-13)."""
+    m = _GATE_RE.search(text or "")
+    if not m:
+        return None, text or ""
+    return m.group(1).strip(), (text[:m.start()] + text[m.end():]).strip()
+
+
+def make_cmd_gate(cmd: str, workdir: str):
+    """Domain gate: lệnh shell deterministic trong worktree. Artifact bị bỏ qua —
+    trạng thái nằm trong worktree (edit-in-place). Lỗi/timeout -> FAIL, không raise."""
+    def verifier(artifact: str):
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=workdir, capture_output=True,
+                               text=True, timeout=300)
+        except subprocess.TimeoutExpired:
+            return False, "gate timeout (300s)"
+        except OSError as e:
+            return False, f"gate không chạy được: {e}"
+        return r.returncode == 0, ((r.stdout + r.stderr).strip() or "(no output)")[-700:]
+    return verifier
+
+
 def derive_tests(goal: str, dod: str, ask=ask_claude):
     """EARS DoD -> frozen pytest source, or None if the reply isn't usable as tests."""
     reply = ask(f"GOAL:\n{goal}\n\nEARS DEFINITION OF DONE:\n{dod}", _TESTWRITER_SOUL,
