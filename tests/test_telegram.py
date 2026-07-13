@@ -163,13 +163,16 @@ def test_launch_ticket_wires_ticket_and_suspend_door(monkeypatch, tmp_path):
 
 
 def test_launch_ticket_repos_pending_fails_closed(monkeypatch):
+    # spec 2026-07-13: pending repo không còn refuse ngay — infer_gate() thử suy ra Gate: trước;
+    # None (không suy ra được) mới thật sự fail-closed.
     monkeypatch.setattr(config, "REPOS", {"iac": "/x"})
     monkeypatch.setattr(config, "REPOS_PENDING", {"iac"})
+    monkeypatch.setattr(tg.deliver, "infer_gate", lambda g, d, r: None)
     api, mem = FakeTgApi(), MemStub()
     called = []
     monkeypatch.setattr(tg, "run_loop", lambda *a, **k: called.append(1))
     tg.launch_ticket("goal Repo: iac DoD: WHEN x SHALL y", "tg-2", mem, api)
-    assert not called and any("domain gate" in t for t, _ in api.sent)
+    assert not called and any("cần Gate" in t for t, _ in api.sent)
 
 
 def test_handle_message_dod_launches_ticket(monkeypatch):

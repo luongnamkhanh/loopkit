@@ -236,3 +236,101 @@ def test_run_loop_gate_cmd_beats_deliver_in_tail(tmp_path, monkeypatch):
     run_loop(t, human_door=lambda a: True, notify=lambda m: None,
              journal_dir=str(tmp_path), memory=None, workspace=str(ws))
     assert calls == ["diff"]                               # ship KHÔNG được gọi
+
+
+from loopkit.fronts import telegram as tgf
+from loopkit.fronts import cli as clif
+
+
+class TgStub:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, text, reply_to=None, keyboard=None):
+        self.sent.append(text)
+        return len(self.sent)
+
+
+class MStub:
+    def __init__(self):
+        self.reg, self.doors = {}, {}
+
+    def register(self, t, **f):
+        self.reg.setdefault(t, {}).update(f)
+
+    def get_run(self, t):
+        return dict(self.reg.get(t, {}))
+
+    def runs(self):
+        return {k: dict(v) for k, v in self.reg.items()}
+
+    def door_open(self, t, p):
+        self.doors[t] = p
+
+    def door_get(self, t):
+        return self.doors.get(t)
+
+    def recall(self, g, d):
+        return None
+
+    def append_event(self, *a):
+        ...
+
+
+def test_tg_pending_repo_infer_gate_and_edit_ticket(tmp_path, monkeypatch):
+    repo, _, _ = make_edit_repo(tmp_path)
+    monkeypatch.setattr(tgf.config, "REPOS", {"deploy": str(repo)})
+    monkeypatch.setattr(tgf.config, "REPOS_PENDING", {"deploy"})
+    monkeypatch.setattr(tgf.config, "ENABLE_TOOLS", True)
+    monkeypatch.setattr(tgf.deliver, "infer_gate", lambda g, d, r: "helm lint c")
+    monkeypatch.setattr(tgf, "make_workspace", lambda th, repo=None: (str(tmp_path / "wt"), "worktree"))
+    seen = {}
+    monkeypatch.setattr(tgf, "run_loop", lambda t, **kw: seen.update(t=t) or
+                        {"ok": True, "approved": False, "worker": "code", "turns": 1})
+    api, mem = TgStub(), MStub()
+    tgf.launch_ticket("do infra Repo: deploy DoD: WHEN x SHALL y", "tg-1", mem, api)
+    assert seen["t"].gate_cmd == "helm lint c"
+    assert any("AI đề xuất" in s for s in api.sent)
+    assert any("gate" in s.lower() for s in api.sent)      # pre-flight label emitted
+
+
+def test_tg_pending_repo_no_gate_refused(tmp_path, monkeypatch):
+    repo, _, _ = make_edit_repo(tmp_path)
+    monkeypatch.setattr(tgf.config, "REPOS", {"deploy": str(repo)})
+    monkeypatch.setattr(tgf.config, "REPOS_PENDING", {"deploy"})
+    monkeypatch.setattr(tgf.deliver, "infer_gate", lambda g, d, r: None)
+    called = []
+    monkeypatch.setattr(tgf, "run_loop", lambda *a, **k: called.append(1))
+    api, mem = TgStub(), MStub()
+    tgf.launch_ticket("do infra Repo: deploy DoD: WHEN x SHALL y", "tg-2", mem, api)
+    assert not called and any("cần Gate" in s for s in api.sent)
+
+
+def test_tg_gate_plus_deliver_warns_and_drops_deliver(tmp_path, monkeypatch):
+    repo, _, _ = make_edit_repo(tmp_path)
+    monkeypatch.setattr(tgf.config, "REPOS", {})
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", str(repo))
+    monkeypatch.setattr(tgf.config, "ENABLE_TOOLS", True)
+    monkeypatch.setattr(tgf, "make_workspace", lambda th, repo=None: (str(tmp_path / "w2"), "worktree"))
+    seen = {}
+    monkeypatch.setattr(tgf, "run_loop", lambda t, **kw: seen.update(t=t) or
+                        {"ok": True, "approved": False, "worker": "code", "turns": 1})
+    api, mem = TgStub(), MStub()
+    tgf.launch_ticket("x Gate: true Deliver: a/b.py DoD: WHEN x SHALL y", "tg-3", mem, api)
+    assert seen["t"].gate_cmd == "true" and seen["t"].deliver is None
+    assert any("bỏ qua Deliver" in s for s in api.sent)
+
+
+def test_cli_gate_ticket_wiring(tmp_path, monkeypatch, capsys):
+    repo, _, _ = make_edit_repo(tmp_path)
+    monkeypatch.setattr(clif, "_cwd_repo", lambda: str(repo))
+    monkeypatch.setattr(clif.config, "ENABLE_TOOLS", True)
+    monkeypatch.setattr(clif.config, "REPOS", {})
+    monkeypatch.setattr(clif, "make_workspace", lambda th, repo=None: (str(tmp_path / "w3"), "worktree"))
+    seen = {}
+    monkeypatch.setattr(clif, "run_loop", lambda t, **kw: seen.update(t=t) or
+                        {"ok": True, "approved": True, "worker": "code", "turns": 1})
+    monkeypatch.setattr(clif.config, "ENABLE_MEMORY", False)
+    clif.cmd_run("y Gate: ./tests/run.sh DoD: WHEN a SHALL b")
+    assert seen["t"].gate_cmd == "./tests/run.sh"
+    assert "Gate" in capsys.readouterr().out

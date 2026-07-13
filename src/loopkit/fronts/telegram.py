@@ -61,14 +61,21 @@ class TgApi:
                    message_id=message_id, reply_markup={"inline_keyboard": []})
 
 
-def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api):
+def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api,
+                 gate_cmd="", gate_label="", mode="module"):
     """Suspend door: persist đủ payload cho finish_suspended rồi trả False — không block poll."""
     def door(artifact: str) -> bool:
         mem.door_open(thread, {"channel": "telegram", "artifact": artifact, "goal": goal,
                                "dod": dod, "deliver": deliver_path, "repo": repo,
-                               "workspace": ws, "tests": tests})
-        dline = f"\n📦 Deliver: {deliver_path}" if deliver_path else ""
-        api.send(f"🚪 Artifact chờ duyệt:{dline}\n{_mask((artifact or '')[:2500])}",
+                               "workspace": ws, "tests": tests, "gate_cmd": gate_cmd,
+                               "mode": mode, "gate_label": gate_label})
+        if mode == "edit":
+            text = (f"🚪 Diff chờ duyệt:\n🛡 Gate: {gate_cmd}\n{gate_label}\n"
+                    f"{_mask((artifact or '')[:2500])}")
+        else:
+            dline = f"\n📦 Deliver: {deliver_path}" if deliver_path else ""
+            text = f"🚪 Artifact chờ duyệt:{dline}\n{_mask((artifact or '')[:2500])}"
+        api.send(text,
                 keyboard=[[{"text": "✅ Approve", "callback_data": f"door:yes:{thread}"},
                            {"text": "🚫 Reject", "callback_data": f"door:no:{thread}"}]])
         # KHÔNG set status ở đây: run_loop sẽ register "done" ngay sau khi door trả False
@@ -80,6 +87,10 @@ def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api):
 def launch_ticket(text: str, thread: str, mem, api) -> None:
     repo_name, text = gates.parse_repo(text)
     deliver_path, text = gates.parse_deliver(text)
+    gate_cmd, text = gates.parse_gate_cmd(text)
+    if gate_cmd and deliver_path:
+        api.send("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
+        deliver_path = None
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         api.send("🙅 Thiếu DoD.")
@@ -88,33 +99,52 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
         api.send(f"🙅 Repo `{repo_name}` không có trong allowlist. "
                  f"Hợp lệ: {', '.join(sorted(config.REPOS)) or '(trống)'}")
         return
-    if repo_name in config.REPOS_PENDING:
-        api.send(f"⏳ Repo `{repo_name}` chờ domain gate.")
-        return
     repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
+    if repo_name in config.REPOS_PENDING and gate_cmd is None:
+        gate_cmd = deliver.infer_gate(goal, dod, repo_path)
+        if gate_cmd:
+            api.send(f"🛡 Gate (AI đề xuất): {gate_cmd}")
+        else:
+            api.send("🙅 repo này cần Gate: — mô tả cách verify trong ticket/idea")
+            return
     api.send(_mask(f"🧩 Nhận ticket.\nGoal: {goal}\nDoD: {dod}"))
     ws_key = f"{repo_name}-{thread}" if repo_name else thread
     wd, kind = make_workspace(ws_key, repo=repo_path)
-    recalled = mem.recall(goal, dod) is not None
-    if recalled:
-        verifier, frozen_tests = gates.make_compile_gate(wd), ""   # unused: run_loop recall trước
-    elif tests_src:
-        verifier, frozen_tests = gates.make_pytest_gate(tests_src, wd), tests_src
-        api.send("🧪 gate = pytest (tests từ ticket)")
+    gate_label = ""
+    if gate_cmd:
+        if not (repo_path and config.ENABLE_TOOLS):
+            api.send("🙅 Gate: cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
+            return
+        verifier, frozen_tests = gates.make_cmd_gate(gate_cmd, wd), ""
+        pre_ok, _ = verifier("")
+        gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"
+                      if pre_ok else "🔴 acceptance gate (đỏ trước khi sửa)")
+        api.send(gate_label)
+        dpath = None                                          # edit-mode: bỏ freeze_deliver hoàn toàn
     else:
-        derived = gates.derive_tests(goal, dod)                    # fresh, TRƯỚC generation
-        if derived:
-            verifier, frozen_tests = gates.make_pytest_gate(derived, wd), derived
-            api.send(_mask(f"🧪 gate = pytest (derived, frozen):\n{derived[:1200]}"))
+        recalled = mem.recall(goal, dod) is not None
+        if recalled:
+            verifier, frozen_tests = gates.make_compile_gate(wd), ""   # unused: run_loop recall trước
+        elif tests_src:
+            verifier, frozen_tests = gates.make_pytest_gate(tests_src, wd), tests_src
+            api.send("🧪 gate = pytest (tests từ ticket)")
         else:
-            verifier, frozen_tests = gates.make_compile_gate(wd), ""
-            api.send("⚠️ Không derive được test — gate compile-only (YẾU).")
-    dpath = None if recalled else deliver.freeze_deliver(deliver_path, goal,
-                                                         repo_path or "", emit=api.send)
+            derived = gates.derive_tests(goal, dod)                    # fresh, TRƯỚC generation
+            if derived:
+                verifier, frozen_tests = gates.make_pytest_gate(derived, wd), derived
+                api.send(_mask(f"🧪 gate = pytest (derived, frozen):\n{derived[:1200]}"))
+            else:
+                verifier, frozen_tests = gates.make_compile_gate(wd), ""
+                api.send("⚠️ Không derive được test — gate compile-only (YẾU).")
+        dpath = None if recalled else deliver.freeze_deliver(deliver_path, goal,
+                                                             repo_path or "", emit=api.send)
     t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
-               deliver=dpath, repo=repo_path or "", tests_src=frozen_tests)
+               deliver=dpath, repo=repo_path or "", tests_src=frozen_tests,
+               gate_cmd=gate_cmd or "")
     res = run_loop(t, human_door=make_tg_door(mem, thread, goal, dod, dpath or "",
-                                              repo_path or "", wd, frozen_tests, api),
+                                              repo_path or "", wd, frozen_tests, api,
+                                              gate_cmd=gate_cmd or "", gate_label=gate_label,
+                                              mode="edit" if gate_cmd else "module"),
                    notify=api.send,
                    project_context=("" if (repo_path and config.ENABLE_TOOLS)
                                     else read_agents_md(".")),
