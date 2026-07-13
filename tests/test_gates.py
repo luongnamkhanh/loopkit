@@ -99,3 +99,23 @@ def test_parse_repo_case_insensitive_and_hyphen():
 def test_parse_repo_absent():
     name, rest = gates.parse_repo("làm X DoD: y")
     assert name is None and rest == "làm X DoD: y"
+
+
+def test_parse_repo_prose_match_no_token(monkeypatch):
+    name, rest = gates.parse_repo("sửa core DoD: y", {"core": "/x", "pipeline": "/y"})
+    assert name == "core" and rest == "sửa core DoD: y"     # prose không bị strip
+
+
+def test_parse_repo_token_overrides_prose():
+    name, rest = gates.parse_repo("Repo: pipeline sửa core DoD: y", {"core": "/x"})
+    assert name == "pipeline" and "core" in rest             # token thắng, prose bị bỏ qua
+
+
+def test_parse_repo_no_name_matches_falls_back():
+    name, rest = gates.parse_repo("sửa cái gì đó DoD: y", {"core": "/x"})
+    assert name is None and rest == "sửa cái gì đó DoD: y"   # caller fallback TARGET_REPO
+
+
+def test_parse_repo_substring_of_another_word_does_not_match():
+    name, _ = gates.parse_repo("tăng score cho model DoD: y", {"core": "/x"})
+    assert name is None                                       # 'core' trong 'score' KHÔNG khớp

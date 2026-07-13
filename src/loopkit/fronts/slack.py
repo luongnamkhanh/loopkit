@@ -87,7 +87,7 @@ def make_door(thread_ts, client, channel, goal, dod, deliver="", repo="", ws="",
 
 # ---- shared ticket launcher (used by mention intake AND thread follow-ups) ----
 def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
-    repo_name, text = gates.parse_repo(text)
+    repo_name, text = gates.parse_repo(text, config.REPOS)
     deliver_path, text = gates.parse_deliver(text)
     gate_cmd, text = gates.parse_gate_cmd(text)
     goal, dod, tests_src = gates.parse_ticket(text)

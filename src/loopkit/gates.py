@@ -65,13 +65,20 @@ def parse_ticket(text: str):
 _REPO_RE = re.compile(r"(?i)\brepo:\s*([\w-]+)\s*")
 
 
-def parse_repo(text: str):
-    """'Repo: <name>' ở bất kỳ đâu trong ticket -> (name, text đã strip token).
-    First match wins; không có token -> (None, text nguyên vẹn)."""
+def parse_repo(text: str, repos: dict = None):
+    """'Repo: <name>' ở bất kỳ đâu trong ticket -> (name, text đã strip token); token thắng,
+    prose bị bỏ qua. Không có token -> quét text tìm tên khớp WHOLE-WORD với key trong `repos`
+    (nếu có) và dùng làm repo đã resolve — substring của từ khác (vd 'core' trong 'score')
+    không khớp. Không tên nào khớp -> (None, text nguyên vẹn) để caller fallback TARGET_REPO."""
     m = _REPO_RE.search(text or "")
-    if not m:
-        return None, text or ""
-    return m.group(1), (text[:m.start()] + text[m.end():]).strip()
+    if m:
+        return m.group(1), (text[:m.start()] + text[m.end():]).strip()
+    best = None
+    for name in (repos or {}):
+        hit = re.search(r"\b" + re.escape(name) + r"\b", text or "")
+        if hit and (best is None or hit.start() < best[0]):
+            best = (hit.start(), name)
+    return (best[1] if best else None), text or ""
 
 
 _DELIVER_RE = re.compile(r"(?i)\bdeliver:\s*([\w./-]+\.py)\s*")
