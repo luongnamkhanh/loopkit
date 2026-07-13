@@ -441,3 +441,40 @@ def test_brains_timeout_returns_sentinel_not_raise(tmp_path, monkeypatch):
     assert "LOOPKIT_TIMEOUT" in out            # không raise — loop retry được
     out2 = eng.run_agent("p", "s", workdir=str(tmp_path), tools=["Read"])
     assert "LOOPKIT_TIMEOUT" in out2
+
+
+def test_issues_command_lists_via_gh(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    seen = {}
+    def fr(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        seen["cmd"] = cmd
+        return type("R", (), {"returncode": 0, "stdout": "#7 fix bug\n#8 add feature"})()
+    monkeypatch.setattr(tgf.subprocess, "run", fr)
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/issues"}, mem, api)
+    assert seen["cmd"] == ["gh", "issue", "list"]
+    assert any("#7 fix bug" in s for s in api.sent)
+
+
+def test_issues_command_repo_arg_resolves(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "REPOS", {"loopkit": str(tmp_path)})
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/o/loopkit.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    seen = {}
+    monkeypatch.setattr(tgf.subprocess, "run",
+                        lambda cmd, **k: seen.update(cwd=k.get("cwd")) or
+                        type("R", (), {"returncode": 0, "stdout": "no open issues"})())
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/issues loopkit"}, mem, api)
+    assert seen["cwd"] == str(tmp_path) and any("no open issues" in s for s in api.sent)
+
+
+def test_issues_command_empty_or_no_cli_friendly(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: None)     # gh thiếu
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/issues"}, mem, api)
+    assert any("không" in s.lower() or "không tra" in s.lower() for s in api.sent)  # báo hiền, không crash
