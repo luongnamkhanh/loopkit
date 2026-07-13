@@ -11,3 +11,6 @@ in **AGENTS.md** — read that first; this file does not duplicate it.
 - `BUILD-MAP.md` is the design↔implementation source of truth: any newly discovered gap gets
   a row there first.
 - Never print or commit `SLACK_*_TOKEN` values; they live in env vars only.
+- Restart bot (slack/telegram): pkill PHẢI chạy ngoài sandbox (dangerouslyDisableSandbox) —
+  pkill trong sandbox không giết được process ngoài sandbox, để lại bot zombie chạy code cũ.
+  Verify bằng `ps -o lstart` (giờ start phải MỚI), đừng tin mỗi pgrep.
