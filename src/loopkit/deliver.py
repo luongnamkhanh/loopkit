@@ -240,9 +240,9 @@ def infer_gate(goal, dod, repo, ask=None):
 def ship_diff(workspace, repo, gate_cmd, goal, dod, emit=print, record=lambda e: None) -> dict:
     """Delivery edit-in-place: re-run gate -> commit TOÀN BỘ thay đổi worktree -> push -> MR.
     Không move file, không Deliver:, không cache (spec 2026-07-13 khoá #4)."""
-    from loopkit import gates as _gates
-    guard = shield.mask if config.ENABLE_SHIELD else (lambda s: s)
     try:
+        from loopkit import gates as _gates
+        guard = shield.mask if config.ENABLE_SHIELD else (lambda s: s)
         ok, detail = _gates.make_cmd_gate(gate_cmd, workspace)("")
         record({"stage": "deliver_gate", "ok": ok, "detail": detail[:200]})
         if not ok:

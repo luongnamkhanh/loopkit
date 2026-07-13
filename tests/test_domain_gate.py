@@ -111,3 +111,16 @@ def test_ship_existing_behavior_unchanged(tmp_path):
     (ws / "solution.py").write_text("def f():\n    return 1\n")
     res = deliver.ship(str(ws), str(repo), "pkg/mod.py", "old ship path", "dod")
     assert res["ok"], res
+
+
+def test_ship_diff_never_raises_on_internal_exception(tmp_path, monkeypatch):
+    repo, _, ws = make_edit_repo(tmp_path)
+    import loopkit.gates as gmod
+    def boom(cmd, wd):
+        raise RuntimeError("gate factory exploded")
+    monkeypatch.setattr(gmod, "make_cmd_gate", boom)
+    events = []
+    res = deliver.ship_diff(str(ws), str(repo), "true", "g", "d",
+                            emit=events.append, record=lambda e: events.append(e))
+    assert res == {"ok": False, "branch": None, "mr_url": None, "error": "exception"}
+    assert any(isinstance(e, dict) and e.get("error") == "exception" for e in events)
