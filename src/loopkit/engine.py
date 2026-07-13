@@ -92,7 +92,7 @@ _RUN_SEQ = itertools.count()
 
 def _worktree_diff(ws) -> str:
     """Artifact edit-mode: intent-to-add để file MỚI hiện trong diff, không stage nội dung."""
-    subprocess.run(["git", "-C", str(ws), "add", "-N", "."], capture_output=True)
+    subprocess.run(["git", "-C", str(ws), "add", "-N", "."], capture_output=True, timeout=30)
     r = subprocess.run(["git", "-C", str(ws), "diff", "HEAD"],
                        capture_output=True, text=True, timeout=60)
     return r.stdout or ""
@@ -131,19 +131,22 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
             return {"ok": True, "cached": True, "worker": None, "turns": 0,
                     "approved": approved, "artifact": cached}
 
+    ws = pathlib.Path(workspace) if workspace else None
+    tool_mode = bool(config.ENABLE_TOOLS and ws)
+    edit_mode = bool(ticket.gate_cmd)
+    if edit_mode and not tool_mode:
+        reason = "edit-mode cần LOOPKIT_ENABLE_TOOLS=1 + workspace"
+        if mem:
+            mem.register(thread_id, status="refused")     # terminal — reaper không đụng
+        record({"stage": "refused", "reason": reason})
+        return {"ok": False, "worker": None, "turns": 0, "reason": reason}
+
     worker = route(ticket, roles)                                     # ORCHESTRATOR
     if mem:
         mem.register(thread_id, status="running", worker=worker, goal=guard(ticket.goal[:200]))
     gen_soul, eval_soul = roles[worker].soul, roles["reviewer"].soul
     emit(f"🧩 routed → {worker} agent")
     ctx = f"PROJECT CONTEXT (AGENTS.md):\n{project_context}\n\n" if project_context else ""
-    ws = pathlib.Path(workspace) if workspace else None
-    tool_mode = bool(config.ENABLE_TOOLS and ws)
-    edit_mode = bool(ticket.gate_cmd)
-    if edit_mode and not tool_mode:
-        record({"stage": "refused", "reason": "edit-mode without tools"})
-        return {"ok": False, "worker": None, "turns": 0,
-                "reason": "edit-mode cần LOOPKIT_ENABLE_TOOLS=1 + workspace"}
     feedback = "no attempt yet"
     for turn in range(1, max_turns + 1):
         gen_prompt = (f"{ctx}GOAL:\n{ticket.goal}\n\nDEFINITION OF DONE:\n{ticket.dod}\n\n"
@@ -241,7 +244,9 @@ def finish_suspended(mem, thread_id: str, payload: dict, decision: bool,
                      notify: Callable[[str], None]) -> None:
     """§8.1 resume path: complete a run whose process died while suspended at the human
     door. Mirrors run_loop's post-door tail (register done -> cache only if approved ->
-    deliver) from the persisted door payload. `turns` is unknown here and stays absent."""
+    deliver) from the persisted door payload. `turns` is unknown here and stays absent.
+    Edit-mode (payload["mode"] == "edit") branches to ship_diff instead of ship — it ships
+    the already-applied worktree diff rather than re-materializing an artifact file."""
     guard = shield.mask if config.ENABLE_SHIELD else (lambda s: s)
     artifact = payload.get("artifact", "")
     mem.register(thread_id, status="done", approved=decision, artifact=artifact[:4000])

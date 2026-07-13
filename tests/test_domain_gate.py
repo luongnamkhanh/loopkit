@@ -165,11 +165,27 @@ def test_run_loop_edit_mode_requires_tools(tmp_path, monkeypatch):
     import loopkit.engine as eng
     monkeypatch.setattr(eng.config, "ENABLE_TOOLS", False)
     monkeypatch.setattr(eng.config, "ENABLE_MEMORY", False)
+    def no_llm(*a, **k):
+        raise AssertionError("route/ask_claude must NOT be called on refusal")
+    monkeypatch.setattr(eng, "route", no_llm)
+    monkeypatch.setattr(eng, "ask_claude", no_llm)
+
+    class RegMem:
+        def __init__(self):
+            self.reg = {}
+        def register(self, t, **f):
+            self.reg.setdefault(t, {}).update(f)
+        def recall(self, g, d):
+            return None
+        def append_event(self, *a):
+            ...
+    rm = RegMem()
     t = Ticket(goal="g", dod="d", verifier=lambda a: (True, ""), gate_cmd="true",
                repo=str(tmp_path))
     res = run_loop(t, notify=lambda m: None, journal_dir=str(tmp_path),
-                   memory=None, workspace=str(tmp_path))
+                   memory=rm, thread_id="rt", workspace=str(tmp_path))
     assert not res["ok"] and "ENABLE_TOOLS" in res["reason"]
+    assert rm.reg["rt"]["status"] == "refused"            # terminal, không kẹt "running"
 
 
 def test_run_loop_edit_mode_empty_diff_fails_gate(tmp_path, monkeypatch):
@@ -203,3 +219,20 @@ def test_finish_suspended_edit_mode_routes_and_refuses_lost_worktree(tmp_path, m
     payload["workspace"] = str(tmp_path / "gone")
     finish_suspended(FakeMem(), "t", payload, True, msgs.append)
     assert shipped == ["true"] and any("worktree" in m for m in msgs)  # từ chối, không ship mù
+
+
+def test_run_loop_gate_cmd_beats_deliver_in_tail(tmp_path, monkeypatch):
+    repo, _, ws = make_edit_repo(tmp_path)
+    (ws / "values.yaml").write_text("a: 1\n")
+    (ws / "new.yaml").unlink()
+    eng = _fake_brain_edit(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(dmod2, "ship_diff",
+                        lambda *a, **k: calls.append("diff") or {"ok": True})
+    monkeypatch.setattr(dmod2, "ship",
+                        lambda *a, **k: calls.append("module") or {"ok": True})
+    t = Ticket(goal="g", dod="d", verifier=gates.make_cmd_gate("true", str(ws)),
+               risky=True, repo=str(repo), gate_cmd="true", deliver="x/y.py")
+    run_loop(t, human_door=lambda a: True, notify=lambda m: None,
+             journal_dir=str(tmp_path), memory=None, workspace=str(ws))
+    assert calls == ["diff"]                               # ship KHÔNG được gọi
