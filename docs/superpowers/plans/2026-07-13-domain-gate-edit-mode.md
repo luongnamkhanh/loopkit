@@ -627,7 +627,7 @@ def test_cli_gate_ticket_wiring(tmp_path, monkeypatch, capsys):
 **Interfaces:**
 - Slack `launch_ticket`: wiring y hệt Telegram Task 4 (parse → conflict warn → pending-infer → edit-mode setup → Ticket + make_door thêm `gate_cmd`, `gate_label`, `mode` — door message thêm dòng `🛡 Gate: ...` + label).
 - `roles.py` analyst soul: thêm một câu — "Với repo pending/hạ tầng, draft PHẢI kèm `Gate: <one shell command>` ưu tiên: script test sẵn có > helm template+lint / terraform validate / pytest > grep có chủ đích."
-- `refine.py` `repo_ctx`: thêm dòng liệt kê pending + nhắc "pending repos REQUIRE a Gate: line in the ticket".
+- `refine.py`: (a) `repo_ctx` — pending đổi mô tả thành "cần kèm `Gate:`", bỏ "never pick these" (hết mâu thuẫn); (b) `_valid_draft` chấp nhận repo pending KHI draft có `Gate:`, và draft có `Gate:` KHÔNG cần `Tests:` (edit-mode = Goal+DoD+Gate); (c) retry-feedback nói rõ luật mới.
 
 - [ ] **Step 1: Failing test** (append — refine nhắc Gate cho analyst)
 
