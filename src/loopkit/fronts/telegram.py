@@ -6,7 +6,7 @@ Trust boundary: chỉ nhận update từ LOOPKIT_TG_CHAT_ID — còn lại drop 
 Door kiểu suspend (persist rồi trả False) → nút Approve xử lý ở poll kế tiếp,
 kể cả sau restart (doors.json + finish_suspended, §8.1 reuse nguyên).
 """
-import http.client, json, pathlib, re, time, urllib.request
+import http.client, json, pathlib, re, shutil, subprocess, time, urllib.request
 
 from loopkit import config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
@@ -18,6 +18,36 @@ _API = "https://api.telegram.org/bot{token}/{method}"
 
 def _mask(s: str) -> str:
     return shield.mask(s) if config.ENABLE_SHIELD else s
+
+
+_ISSUE_RE = re.compile(r"(?i)\bissue\b|#\d+")
+
+
+def enrich_idea_with_issue(text: str, repo_name) -> str:
+    """Idea nhắc issue (chữ 'issue' hoặc '#<số>') -> append nội dung `gh/glab issue view/list`
+    trước khi analyst đọc. Repo: token (qua config.REPOS) > LOOPKIT_TARGET_REPO; host detect từ
+    git remote (github.com -> gh, còn lại -> glab). Fetch fail/CLI thiếu -> trả nguyên text
+    (không chặn, không crash flow cũ)."""
+    if not _ISSUE_RE.search(text or ""):
+        return text
+    repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
+    if not repo_path:
+        return text
+    try:
+        remote = deliver._remote_url(repo_path)
+        if not remote:
+            return text
+        tool = "gh" if "github.com" in remote else "glab"
+        if not shutil.which(tool):
+            return text
+        num = re.search(r"#(\d+)", text)
+        cmd = [tool, "issue", "view", num.group(1)] if num else [tool, "issue", "list"]
+        r = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0 or not r.stdout.strip():
+            return text
+        return f"{text}\n\n--- issue ---\n{r.stdout.strip()[:1500]}"
+    except Exception:                    # fetch fail (host-detect lỗi/CLI thiếu/...) -> flow cũ, không crash
+        return text
 
 
 class TgApi:
@@ -211,7 +241,7 @@ def handle_message(msg: dict, mem, api) -> None:
         else:
             api.send("Lệnh không biết — chỉ có /status. (idea/ticket thì nhắn thường)")
         return
-    _, stripped = gates.parse_repo(text)
+    repo_name, stripped = gates.parse_repo(text)
     _, dod, _ = gates.parse_ticket(gates.parse_deliver(stripped)[1])
     if dod:
         launch_ticket(text, f"tg-{msg['message_id']}", mem, api)
@@ -221,7 +251,8 @@ def handle_message(msg: dict, mem, api) -> None:
         refine_step(awaiting[0], text, mem, api)
     elif not awaiting:                                   # luật 2: idea mới
         thread = f"tg-{msg['message_id']}"
-        mem.register(thread, status="refining", idea=_mask(text[:500]), refine_turns=0)
+        idea = enrich_idea_with_issue(text, repo_name)
+        mem.register(thread, status="refining", idea=_mask(idea[:2500]), refine_turns=0)
         refine_step(thread, None, mem, api)
     else:                                                # luật 3: mơ hồ -> từ chối
         api.send("⚠️ Đang có ≥2 ticket chờ trả lời — chốt bớt một cái đã.")

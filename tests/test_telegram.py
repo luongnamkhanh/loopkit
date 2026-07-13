@@ -176,6 +176,110 @@ def test_launch_ticket_repos_pending_fails_closed(monkeypatch):
     assert not called and any("cần Gate" in t for t, _ in api.sent)
 
 
+def test_enrich_idea_no_issue_pattern_is_noop(monkeypatch):
+    called = []
+    monkeypatch.setattr(tg.subprocess, "run", lambda *a, **k: called.append(1))
+    assert tg.enrich_idea_with_issue("make a widget", None) == "make a widget"
+    assert not called
+
+
+def test_enrich_idea_no_repo_resolved_is_noop(monkeypatch):
+    monkeypatch.setattr(config, "TARGET_REPO", "")
+    called = []
+    monkeypatch.setattr(tg.subprocess, "run", lambda *a, **k: called.append(1))
+    assert tg.enrich_idea_with_issue("fix issue #12", None) == "fix issue #12"
+    assert not called
+
+
+def test_enrich_idea_appends_issue_view_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tg.deliver, "_remote_url", lambda repo: "git@gitlab.com:x/y.git")
+    monkeypatch.setattr(tg.shutil, "which", lambda tool: "/usr/bin/glab")
+    seen = {}
+
+    def fake_run(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        seen["cmd"], seen["cwd"], seen["timeout"] = cmd, cwd, timeout
+        return type("R", (), {"returncode": 0, "stdout": "Issue #12: fix the thing"})()
+
+    monkeypatch.setattr(tg.subprocess, "run", fake_run)
+    out = tg.enrich_idea_with_issue("fix issue #12 please", None)
+    assert seen["cmd"] == ["glab", "issue", "view", "12"]
+    assert seen["cwd"] == str(tmp_path) and seen["timeout"] == 30
+    assert "fix issue #12 please" in out and "Issue #12: fix the thing" in out
+
+
+def test_enrich_idea_uses_gh_for_github_and_issue_list_without_number(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "REPOS", {"pipeline": str(tmp_path)})
+    monkeypatch.setattr(tg.deliver, "_remote_url", lambda repo: "https://github.com/x/y.git")
+    monkeypatch.setattr(tg.shutil, "which", lambda tool: "/usr/bin/gh")
+    seen = {}
+
+    def fake_run(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        seen["cmd"] = cmd
+        return type("R", (), {"returncode": 0, "stdout": "#1 open\n#2 open"})()
+
+    monkeypatch.setattr(tg.subprocess, "run", fake_run)
+    out = tg.enrich_idea_with_issue("has this issue been seen", "pipeline")
+    assert seen["cmd"] == ["gh", "issue", "list"]
+    assert "#1 open" in out
+
+
+def test_enrich_idea_cli_missing_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tg.deliver, "_remote_url", lambda repo: "https://github.com/x/y.git")
+    monkeypatch.setattr(tg.shutil, "which", lambda tool: None)
+    called = []
+    monkeypatch.setattr(tg.subprocess, "run", lambda *a, **k: called.append(1))
+    assert tg.enrich_idea_with_issue("issue #3", None) == "issue #3"
+    assert not called
+
+
+def test_enrich_idea_subprocess_fail_or_timeout_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tg.deliver, "_remote_url", lambda repo: "https://github.com/x/y.git")
+    monkeypatch.setattr(tg.shutil, "which", lambda tool: "/usr/bin/gh")
+
+    def boom(*a, **k):
+        raise tg.subprocess.TimeoutExpired(cmd="gh", timeout=30)
+
+    monkeypatch.setattr(tg.subprocess, "run", boom)
+    assert tg.enrich_idea_with_issue("issue #3", None) == "issue #3"
+
+    def nonzero(*a, **k):
+        return type("R", (), {"returncode": 1, "stdout": ""})()
+
+    monkeypatch.setattr(tg.subprocess, "run", nonzero)
+    assert tg.enrich_idea_with_issue("issue #3", None) == "issue #3"
+
+
+def test_enrich_idea_remote_url_none_falls_back_no_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tg.deliver, "_remote_url", lambda repo: None)   # repo không có remote
+    called = []
+    monkeypatch.setattr(tg.subprocess, "run", lambda *a, **k: called.append(1))
+    assert tg.enrich_idea_with_issue("issue #3", None) == "issue #3"
+    assert not called
+
+
+def test_enrich_idea_remote_url_raises_falls_back_no_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TARGET_REPO", str(tmp_path))
+
+    def boom(repo):
+        raise ValueError("host detect kaboom")
+
+    monkeypatch.setattr(tg.deliver, "_remote_url", boom)
+    assert tg.enrich_idea_with_issue("issue #3", None) == "issue #3"
+
+
+def test_handle_message_idea_enriched_before_register(monkeypatch):
+    api, mem = FakeTgApi(), MemStub()
+    monkeypatch.setattr(tg, "enrich_idea_with_issue",
+                        lambda text, repo_name: text + " [issue content]")
+    monkeypatch.setattr(tg, "refine_step", lambda *a: None)
+    tg.handle_message({"message_id": 1, "text": "fix issue #9"}, mem, api)
+    assert "[issue content]" in mem.reg["tg-1"]["idea"]
+
+
 def test_handle_message_dod_launches_ticket(monkeypatch):
     api, mem = FakeTgApi(), MemStub()
     seen = {}
