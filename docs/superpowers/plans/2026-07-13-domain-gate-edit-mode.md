@@ -395,14 +395,18 @@ def _worktree_diff(ws) -> str:
     return r.stdout or ""
 ```
 
-  (c) Trong `run_loop`: ngay sau tính `tool_mode`:
+  (c) Trong `run_loop`: khối `ws`/`tool_mode`/`edit_mode` + refusal phải nằm TRƯỚC
+  `worker = route(ticket, roles)` (route là LLM call — từ chối phải xảy ra trước nó,
+  và đăng ký registry trạng thái terminal để reaper không báo nhầm interrupted):
 
 ```python
     edit_mode = bool(ticket.gate_cmd)
     if edit_mode and not tool_mode:
-        record({"stage": "refused", "reason": "edit-mode without tools"})
-        return {"ok": False, "worker": None, "turns": 0,
-                "reason": "edit-mode cần LOOPKIT_ENABLE_TOOLS=1 + workspace"}
+        reason = "edit-mode cần LOOPKIT_ENABLE_TOOLS=1 + workspace"
+        if mem:
+            mem.register(thread_id, status="refused")     # terminal — reaper không đụng
+        record({"stage": "refused", "reason": reason})
+        return {"ok": False, "worker": None, "turns": 0, "reason": reason}
 ```
 
   Recall block đầu hàm đổi điều kiện: `if mem and not ticket.gate_cmd:` (edit-mode không recall).
