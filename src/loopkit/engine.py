@@ -92,10 +92,13 @@ _RUN_SEQ = itertools.count()
 
 def _worktree_diff(ws) -> str:
     """Artifact edit-mode: intent-to-add để file MỚI hiện trong diff, không stage nội dung."""
-    subprocess.run(["git", "-C", str(ws), "add", "-N", "."], capture_output=True, timeout=30)
-    r = subprocess.run(["git", "-C", str(ws), "diff", "HEAD"],
-                       capture_output=True, text=True, timeout=60)
-    return r.stdout or ""
+    try:
+        subprocess.run(["git", "-C", str(ws), "add", "-N", "."], capture_output=True, timeout=30)
+        r = subprocess.run(["git", "-C", str(ws), "diff", "HEAD"],
+                           capture_output=True, text=True, timeout=60)
+        return r.stdout or ""
+    except (subprocess.SubprocessError, OSError):    # fail-closed: no diff beats a crashed run
+        return ""
 
 def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int] = None,
              human_door: Callable[[str], bool] = default_human_door,
@@ -217,8 +220,9 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
             if mem:
                 mem.register(thread_id, status="done", turns=turn, approved=approved,
                              artifact=artifact[:4000])             # revision base for follow-ups
-                if (not ticket.risky) or approved:
-                    mem.store(ticket.goal, ticket.dod, artifact)   # cache only VERIFIED(+approved)
+                if ((not ticket.risky) or approved) and not ticket.gate_cmd:
+                    mem.store(ticket.goal, ticket.dod, artifact)   # cache only VERIFIED(+approved);
+                    # never an edit-mode diff into the semantic cache (locked decision #4)
             record({"stage": "done", "turn": turn, "approved": approved})
             if (approved and ticket.risky and ticket.gate_cmd and ticket.repo
                     and ws and config.DELIVER):
@@ -251,7 +255,8 @@ def finish_suspended(mem, thread_id: str, payload: dict, decision: bool,
     artifact = payload.get("artifact", "")
     mem.register(thread_id, status="done", approved=decision, artifact=artifact[:4000])
     if decision:
-        mem.store(payload.get("goal", ""), payload.get("dod", ""), artifact)
+        if payload.get("mode") != "edit":     # edit-mode diffs never enter the cache (#4)
+            mem.store(payload.get("goal", ""), payload.get("dod", ""), artifact)
         notify("✅ approved (resumed sau restart)")
         notify(f"📦 artifact:\n```\n{guard(artifact[:2500])}\n```")
         if payload.get("mode") == "edit" and payload.get("gate_cmd") and config.DELIVER:

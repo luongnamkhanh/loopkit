@@ -167,6 +167,7 @@ def test_launch_ticket_repos_pending_fails_closed(monkeypatch):
     # None (không suy ra được) mới thật sự fail-closed.
     monkeypatch.setattr(config, "REPOS", {"iac": "/x"})
     monkeypatch.setattr(config, "REPOS_PENDING", {"iac"})
+    monkeypatch.setattr(config, "ENABLE_TOOLS", True)  # past the hoisted tools-refusal (fix 2)
     monkeypatch.setattr(tg.deliver, "infer_gate", lambda g, d, r: None)
     api, mem = FakeTgApi(), MemStub()
     called = []

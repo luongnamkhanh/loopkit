@@ -80,6 +80,7 @@ def refine_turn(idea, history, turns_used, max_turns, repos=None, ask=ask_claude
             f"criteria> Tests: ```python ...```' — tests import from `solution`, define test_* "
             f"functions; if a 'Repo:' name is present it MUST be an active repo, OR a pending "
             f"repo WITH a `Gate: <shell command>` line (edit-mode drafts need Goal+DoD+Gate, no "
-            f"Tests). Output the corrected TICKET.\n\nPREVIOUS DRAFT:\n{text}",
+            f"Tests). Gate: phải đứng TRƯỚC DoD: — đứng sau sẽ bị bỏ qua. Output the corrected "
+            f"TICKET.\n\nPREVIOUS DRAFT:\n{text}",
             soul, model=model))
     return ("draft", text) if _valid_draft(text, repos) else ("draft_unvalidated", text)

@@ -298,6 +298,7 @@ def test_tg_pending_repo_no_gate_refused(tmp_path, monkeypatch):
     repo, _, _ = make_edit_repo(tmp_path)
     monkeypatch.setattr(tgf.config, "REPOS", {"deploy": str(repo)})
     monkeypatch.setattr(tgf.config, "REPOS_PENDING", {"deploy"})
+    monkeypatch.setattr(tgf.config, "ENABLE_TOOLS", True)  # past the hoisted tools-refusal (fix 2)
     monkeypatch.setattr(tgf.deliver, "infer_gate", lambda g, d, r: None)
     called = []
     monkeypatch.setattr(tgf, "run_loop", lambda *a, **k: called.append(1))
@@ -350,6 +351,35 @@ def test_tg_pending_repo_deliver_dropped_with_warning_after_infer(tmp_path, monk
     tgf.launch_ticket("x Repo: deploy Deliver: a/b.py DoD: WHEN a SHALL b", "tg-9", mem, api)
     assert seen["t"].gate_cmd == "helm lint c" and seen["t"].deliver is None
     assert any("bỏ qua Deliver" in s for s in api.sent)    # KHÔNG drop im lặng
+
+
+def test_edit_mode_never_stores_to_cache(tmp_path, monkeypatch):
+    repo, _, ws = make_edit_repo(tmp_path)
+    (ws / "values.yaml").write_text("a: 1\n")
+    (ws / "new.yaml").unlink()
+    eng = _fake_brain_edit(monkeypatch, tmp_path)
+    stored = []
+
+    class CacheMem:
+        def register(self, *a, **k): ...
+        def append_event(self, *a, **k): ...
+        def recall(self, g, d):
+            return None
+        def store(self, *a, **k):
+            stored.append(1)
+
+    monkeypatch.setattr(eng.config, "ENABLE_MEMORY", True)
+    monkeypatch.setattr(dmod2, "ship_diff", lambda *a, **k: {"ok": True})
+    t = Ticket(goal="g", dod="d", verifier=gates.make_cmd_gate("true", str(ws)),
+               risky=True, repo=str(repo), gate_cmd="true")
+    run_loop(t, human_door=lambda a: True, notify=lambda m: None,
+             journal_dir=str(tmp_path), memory=CacheMem(), workspace=str(ws))
+    assert not stored                                  # locked decision #4
+    payload = {"artifact": "diff", "goal": "g", "dod": "d", "mode": "edit",
+               "gate_cmd": "true", "repo": str(repo), "workspace": str(ws)}
+    monkeypatch.setattr(dmod2, "ship_diff", lambda *a, **k: {"ok": True})
+    finish_suspended(CacheMem(), "t", payload, True, lambda m: None)
+    assert not stored
 
 
 def test_tg_pending_repo_explicit_gate_skips_infer(tmp_path, monkeypatch):

@@ -93,15 +93,24 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         return False
+    if gate_cmd is None and re.search(r"(?i)\bgate:", dod or ""):
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text="ℹ️ Thấy chữ 'Gate:' SAU DoD — vị trí đó bị bỏ qua; Gate: phải đứng TRƯỚC DoD:.")
     if repo_name and repo_name not in config.REPOS:            # fail-closed: allowlist quyết
         client.chat_postMessage(channel=channel, thread_ts=thread,
             text=f"🙅 Repo `{repo_name}` không có trong allowlist. "
                  f"Hợp lệ: {', '.join(sorted(config.REPOS)) or '(trống)'}")
         return True                                            # đã xử lý — không rơi vào refinement
     repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
+    if (gate_cmd or repo_name in config.REPOS_PENDING) and not (repo_path and config.ENABLE_TOOLS):
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text="🙅 Gate:/repo pending cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
+        return True
+    gate_inferred = False
     if repo_name in config.REPOS_PENDING and gate_cmd is None:  # requires-gate: infer trước fail-closed
         gate_cmd = deliver.infer_gate(goal, dod, repo_path)
         if gate_cmd:
+            gate_inferred = True
             client.chat_postMessage(channel=channel, thread_ts=thread,
                 text=f"🛡 Gate (AI đề xuất): {gate_cmd}")
         else:
@@ -112,10 +121,6 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
         client.chat_postMessage(channel=channel, thread_ts=thread,
             text="⚠️ Gate: là edit-mode — bỏ qua Deliver:")
         deliver_path = None
-    if gate_cmd and not (repo_path and config.ENABLE_TOOLS):   # hoisted trước threading (Task 4 fix)
-        client.chat_postMessage(channel=channel, thread_ts=thread,
-            text="🙅 Gate: cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
-        return True
     client.chat_postMessage(channel=channel, thread_ts=thread,
         text=_guard(f"🧩 Nhận ticket.\n*Goal:* {goal}\n*DoD:* {dod}"))
     if tests_src is None and re.search(r"(?i)\btests:", text):
@@ -140,6 +145,8 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
                 pre_ok, _ = verifier("")
                 gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"
                               if pre_ok else "🔴 acceptance gate (đỏ trước khi sửa)")
+                if gate_inferred:
+                    gate_label = "(AI đề xuất) " + gate_label
                 notify(gate_label)
                 dpath = None
             else:

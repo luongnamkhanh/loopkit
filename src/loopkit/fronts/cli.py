@@ -3,7 +3,7 @@
 Cùng một engine với front Slack; khác biệt duy nhất: door là prompt terminal và
 workspace lấy từ cwd (git repo -> worktree per ticket; không phải git -> tmp dir).
 """
-import argparse, subprocess, time
+import argparse, re, subprocess, time
 
 from loopkit import __version__, config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
@@ -63,6 +63,8 @@ def cmd_run(text: str, thread=None) -> int:
     if not dod:
         print("🙅 Thiếu DoD. Cú pháp: loopkit run '<goal> DoD: <EARS> [Tests: <pytest>]'")
         return 1
+    if gate_cmd is None and re.search(r"(?i)\bgate:", dod or ""):
+        print("ℹ️ Thấy chữ 'Gate:' SAU DoD — vị trí đó bị bỏ qua; Gate: phải đứng TRƯỚC DoD:.")
     thread = thread or f"cli-{int(time.time() * 1000)}"
     mem = _mem()
     repo = _cwd_repo()
@@ -227,6 +229,8 @@ def cmd_ticket_run(thread: str) -> int:
     if not dod:
         print("FAILED: draft không parse được DoD")
         return 1
+    if gate_cmd is None and re.search(r"(?i)\bgate:", dod or ""):
+        print("ℹ️ Thấy chữ 'Gate:' SAU DoD — vị trí đó bị bỏ qua; Gate: phải đứng TRƯỚC DoD:.")
     repo = _cwd_repo()
     if gate_cmd:
         if not (repo and config.ENABLE_TOOLS):

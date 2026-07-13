@@ -6,7 +6,7 @@ Trust boundary: chỉ nhận update từ LOOPKIT_TG_CHAT_ID — còn lại drop 
 Door kiểu suspend (persist rồi trả False) → nút Approve xử lý ở poll kế tiếp,
 kể cả sau restart (doors.json + finish_suspended, §8.1 reuse nguyên).
 """
-import http.client, json, pathlib, time, urllib.request
+import http.client, json, pathlib, re, time, urllib.request
 
 from loopkit import config, deliver, gates, refine, shield
 from loopkit.engine import Ticket, run_loop, read_agents_md, finish_suspended
@@ -92,14 +92,21 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     if not dod:
         api.send("🙅 Thiếu DoD.")
         return
+    if gate_cmd is None and re.search(r"(?i)\bgate:", dod or ""):
+        api.send("ℹ️ Thấy chữ 'Gate:' SAU DoD — vị trí đó bị bỏ qua; Gate: phải đứng TRƯỚC DoD:.")
     if repo_name and repo_name not in config.REPOS:            # fail-closed trước LLM
         api.send(f"🙅 Repo `{repo_name}` không có trong allowlist. "
                  f"Hợp lệ: {', '.join(sorted(config.REPOS)) or '(trống)'}")
         return
     repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
+    if (gate_cmd or repo_name in config.REPOS_PENDING) and not (repo_path and config.ENABLE_TOOLS):
+        api.send("🙅 Gate:/repo pending cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
+        return
+    gate_inferred = False
     if repo_name in config.REPOS_PENDING and gate_cmd is None:
         gate_cmd = deliver.infer_gate(goal, dod, repo_path)
         if gate_cmd:
+            gate_inferred = True
             api.send(f"🛡 Gate (AI đề xuất): {gate_cmd}")
         else:
             api.send("🙅 repo này cần Gate: — mô tả cách verify trong ticket/idea")
@@ -107,10 +114,6 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     if gate_cmd and deliver_path:                          # Deliver: bị vô hiệu bởi gate AI-infer
         api.send("⚠️ Gate: là edit-mode — bỏ qua Deliver:")
         deliver_path = None
-    if gate_cmd:
-        if not (repo_path and config.ENABLE_TOOLS):
-            api.send("🙅 Gate: cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
-            return
     api.send(_mask(f"🧩 Nhận ticket.\nGoal: {goal}\nDoD: {dod}"))
     ws_key = f"{repo_name}-{thread}" if repo_name else thread
     wd, kind = make_workspace(ws_key, repo=repo_path)
@@ -120,6 +123,8 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
         pre_ok, _ = verifier("")
         gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"
                       if pre_ok else "🔴 acceptance gate (đỏ trước khi sửa)")
+        if gate_inferred:
+            gate_label = "(AI đề xuất) " + gate_label
         api.send(gate_label)
         dpath = None                                          # edit-mode: bỏ freeze_deliver hoàn toàn
     else:
