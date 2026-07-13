@@ -31,6 +31,9 @@ không phải người duyệt.
 7. `AWAITING_APPROVAL` + `ARTIFACT:` → đưa artifact cho người dùng, áp Luật 3.
    - Door có dòng `DELIVER: <path>` → relay path đó cho người duyệt cùng artifact —
      approve nghĩa là duyệt cả chỗ đặt file; sau approve loopkit tự commit/push/tạo MR.
+   - Door có dòng `GATE: <cmd>` (kèm nhãn pre-flight, ví dụ "gate XANH trước khi sửa") →
+     relay CẢ lệnh gate lẫn nhãn đó cho người duyệt cùng diff — approve nghĩa là duyệt cả
+     lệnh Gate lẫn diff, không chỉ diff.
 8. Duyệt tường minh → `loopkit approve <thread>`; từ chối → `loopkit reject <thread>`.
    Mất dấu → `loopkit show <thread>` / `loopkit status`.
 

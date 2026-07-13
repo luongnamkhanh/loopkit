@@ -51,20 +51,29 @@ app = App(token=BOT_TOKEN)
 _pending = {}   # thread_ts -> {"event": threading.Event, "approved": bool}
 
 # ---- Slack human door: post artifact + Approve/Reject, block until a human clicks ----
-def make_door(thread_ts, client, channel, goal, dod, deliver="", repo="", ws="", tests=""):
+def make_door(thread_ts, client, channel, goal, dod, deliver="", repo="", ws="", tests="",
+              gate_cmd="", gate_label="", mode="module"):
     def door(artifact: str) -> bool:
         ev = threading.Event(); _pending[thread_ts] = {"event": ev, "approved": False}
         if MEM:                                  # §8.1: persist so a restart can resume it
             MEM.door_open(thread_ts, {"channel": channel, "artifact": artifact,
                                       "goal": goal, "dod": dod, "deliver": deliver,
-                                      "repo": repo, "workspace": ws, "tests": tests})
+                                      "repo": repo, "workspace": ws, "tests": tests,
+                                      "gate_cmd": gate_cmd, "mode": mode,
+                                      "gate_label": gate_label})
             MEM.register(thread_ts, status="awaiting_approval")
         preview = _guard((artifact or "")[:1500])    # never ask a blind approval
-        deliver_line = f"\n📦 Deliver: `{deliver}`" if deliver else ""
+        if mode == "edit":
+            header = f"Reviewer PASS — diff chờ duyệt:\n🛡 Gate: {gate_cmd}\n{gate_label}"
+            fence = f"```diff\n{preview}\n```"
+        else:
+            deliver_line = f"\n📦 Deliver: `{deliver}`" if deliver else ""
+            header = f"Reviewer PASS — artifact chờ duyệt:{deliver_line}"
+            fence = f"```{preview}```"
         client.chat_postMessage(channel=channel, thread_ts=thread_ts,
             text="Reviewer PASS — approve this change?",
             blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                     "text": f"Reviewer PASS — artifact chờ duyệt:{deliver_line}\n```{preview}```"}},
+                     "text": f"{header}\n{fence}"}},
                     {"type": "actions", "elements": [
                 {"type": "button", "style": "primary", "action_id": "approve",
                  "text": {"type": "plain_text", "text": "Approve"}, "value": thread_ts},
@@ -80,6 +89,7 @@ def make_door(thread_ts, client, channel, goal, dod, deliver="", repo="", ws="",
 def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
     repo_name, text = gates.parse_repo(text)
     deliver_path, text = gates.parse_deliver(text)
+    gate_cmd, text = gates.parse_gate_cmd(text)
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         return False
@@ -88,12 +98,24 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
             text=f"🙅 Repo `{repo_name}` không có trong allowlist. "
                  f"Hợp lệ: {', '.join(sorted(config.REPOS)) or '(trống)'}")
         return True                                            # đã xử lý — không rơi vào refinement
-    if repo_name in config.REPOS_PENDING:
-        client.chat_postMessage(channel=channel, thread_ts=thread,
-            text=f"⏳ Repo `{repo_name}` đã đăng ký nhưng CHƯA có gate phù hợp "
-                 "(terraform/helm) — chờ domain gate.")
-        return True
     repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
+    if repo_name in config.REPOS_PENDING and gate_cmd is None:  # requires-gate: infer trước fail-closed
+        gate_cmd = deliver.infer_gate(goal, dod, repo_path)
+        if gate_cmd:
+            client.chat_postMessage(channel=channel, thread_ts=thread,
+                text=f"🛡 Gate (AI đề xuất): {gate_cmd}")
+        else:
+            client.chat_postMessage(channel=channel, thread_ts=thread,
+                text="🙅 repo này cần Gate: — mô tả cách verify trong ticket/idea")
+            return True
+    if gate_cmd and deliver_path:                          # Deliver: bị vô hiệu bởi gate AI-infer
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text="⚠️ Gate: là edit-mode — bỏ qua Deliver:")
+        deliver_path = None
+    if gate_cmd and not (repo_path and config.ENABLE_TOOLS):   # hoisted trước threading (Task 4 fix)
+        client.chat_postMessage(channel=channel, thread_ts=thread,
+            text="🙅 Gate: cần repo hợp lệ + LOOPKIT_ENABLE_TOOLS=1.")
+        return True
     client.chat_postMessage(channel=channel, thread_ts=thread,
         text=_guard(f"🧩 Nhận ticket.\n*Goal:* {goal}\n*DoD:* {dod}"))
     if tests_src is None and re.search(r"(?i)\btests:", text):
@@ -112,35 +134,47 @@ def launch_ticket(client, channel, thread, text, prev_artifact=None) -> bool:
             wd, kind = make_workspace(ws_key, repo=repo_path)   # isolated dir, or git worktree
             if kind == "worktree":
                 notify(f"🌿 workspace = git worktree `{wd}` (branch loop/…)")
-            # Live finding: check recall BEFORE deriving — a recalled ticket was burning an
-            # LLM call on tests that would never run (and posting a misleading 🧪 message).
-            if MEM and MEM.recall(goal, dod) is not None:
-                verifier = gates.make_compile_gate(wd)   # unused: run_loop recalls before gating
-                frozen_tests = ""
-                recalled = True
-            elif tests_src:
-                verifier = gates.make_pytest_gate(tests_src, wd)
-                frozen_tests = tests_src
-                recalled = False
-                notify("🧪 gate = pytest (tests from the ticket)")
+            gate_label = ""
+            if gate_cmd:                                  # edit-mode: bỏ recall/derive + freeze_deliver
+                verifier, frozen_tests = gates.make_cmd_gate(gate_cmd, wd), ""
+                pre_ok, _ = verifier("")
+                gate_label = ("⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD"
+                              if pre_ok else "🔴 acceptance gate (đỏ trước khi sửa)")
+                notify(gate_label)
+                dpath = None
             else:
-                derived = gates.derive_tests(goal, dod)      # fresh call, BEFORE generation; frozen
-                recalled = False
-                if derived:
-                    verifier = gates.make_pytest_gate(derived, wd)
-                    frozen_tests = derived
-                    notify(_guard(f"🧪 gate = pytest (derived from DoD, frozen):\n```\n{derived[:1200]}\n```"))
-                else:
-                    verifier = gates.make_compile_gate(wd)
+                # Live finding: check recall BEFORE deriving — a recalled ticket was burning an
+                # LLM call on tests that would never run (and posting a misleading 🧪 message).
+                if MEM and MEM.recall(goal, dod) is not None:
+                    verifier = gates.make_compile_gate(wd)   # unused: run_loop recalls before gating
                     frozen_tests = ""
-                    notify("⚠️ Không derive được test từ DoD — gate = compile-only (YẾU). "
-                           "Cân nhắc gửi lại kèm `Tests:`.")
-            dpath = None if recalled else deliver.freeze_deliver(deliver_path, goal, repo_path or "", emit=notify)
+                    recalled = True
+                elif tests_src:
+                    verifier = gates.make_pytest_gate(tests_src, wd)
+                    frozen_tests = tests_src
+                    recalled = False
+                    notify("🧪 gate = pytest (tests from the ticket)")
+                else:
+                    derived = gates.derive_tests(goal, dod)      # fresh call, BEFORE generation; frozen
+                    recalled = False
+                    if derived:
+                        verifier = gates.make_pytest_gate(derived, wd)
+                        frozen_tests = derived
+                        notify(_guard(f"🧪 gate = pytest (derived from DoD, frozen):\n```\n{derived[:1200]}\n```"))
+                    else:
+                        verifier = gates.make_compile_gate(wd)
+                        frozen_tests = ""
+                        notify("⚠️ Không derive được test từ DoD — gate = compile-only (YẾU). "
+                               "Cân nhắc gửi lại kèm `Tests:`.")
+                dpath = None if recalled else deliver.freeze_deliver(deliver_path, goal, repo_path or "", emit=notify)
             t = Ticket(goal=goal, dod=dod, verifier=verifier, risky=True,
-                       deliver=dpath, repo=repo_path or "", tests_src=frozen_tests)
+                       deliver=dpath, repo=repo_path or "", tests_src=frozen_tests,
+                       gate_cmd=gate_cmd or "")
             res = run_loop(t, human_door=make_door(thread, client, channel, goal, dod,
                                                    deliver=dpath or "", repo=repo_path or "",
-                                                   ws=wd, tests=frozen_tests),
+                                                   ws=wd, tests=frozen_tests,
+                                                   gate_cmd=gate_cmd or "", gate_label=gate_label,
+                                                   mode="edit" if gate_cmd else "module"),
                            notify=notify,
                            project_context=("" if (repo_path and config.ENABLE_TOOLS)
                                             else PROJECT_CTX),

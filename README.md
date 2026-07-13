@@ -69,6 +69,13 @@ commit — the ship chain is pure git + pytest. Any step failing reports loudly,
 the branch local, and never rolls back the approval. MR creation uses `glab`/`gh` when
 available, else posts the create-MR link from the push output.
 
+- `Gate: <command>` on a ticket switches it to **edit-in-place mode**: the generator edits
+  files directly in the worktree (no `solution.py`), the gate is that one shell command run
+  in the worktree, and the artifact reviewed/approved is the git diff — multi-file edits
+  verified by YOUR repo's own suite (helm template+lint, terraform validate, pytest, …), not
+  a single-file pytest gate (resolves issue #1). `REPOS_PENDING` repos *require* a `Gate:` —
+  loopkit infers one (AI-proposed, shown before it runs) or refuses the ticket.
+
 ## Knobs (all env, prefix `LOOPKIT_`)
 
 | Knob | Default | What |

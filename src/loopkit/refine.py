@@ -50,7 +50,8 @@ def refine_turn(idea, history, turns_used, max_turns, repos=None, ask=ask_claude
         repo_ctx = ("\nAVAILABLE REPOS — the ticket SHOULD include 'Repo: <name>':\n"
                     f"  active: {', '.join(repos.get('active', [])) or '(none)'}\n"
                     f"  pending (registered, NOT usable yet — never pick these): "
-                    f"{', '.join(repos.get('pending', [])) or '(none)'}\n")
+                    f"{', '.join(repos.get('pending', [])) or '(none)'}\n"
+                    "  pending repos REQUIRE a Gate: line in the ticket\n")
     prompt = (f"RAW IDEA:\n{idea}\n\nCONVERSATION SO FAR:\n{convo or '(none)'}\n{repo_ctx}\n"
               + ("QUESTION BUDGET EXHAUSTED: output the TICKET now; state assumptions in the goal."
                  if forced else f"Questions used: {turns_used}/{max_turns}."))

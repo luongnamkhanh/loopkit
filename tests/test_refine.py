@@ -102,3 +102,11 @@ def test_draft_without_repo_still_valid():
                                  repos={"active": ["pipeline"], "pending": []},
                                  ask=lambda p, s, model=None: "TICKET: " + VALID_TICKET)
     assert kind == "draft"                                     # không Repo: -> TARGET_REPO default
+
+
+def test_refine_repo_ctx_mentions_gate_for_pending():
+    seen = {}
+    refine.refine_turn("idea", [], 0, 5,
+                       repos={"active": ["pipeline"], "pending": ["deploy"]},
+                       ask=lambda p, s, model=None: seen.update(p=p, s=s) or "QUESTION: q?")
+    assert "Gate:" in seen["p"] or "Gate:" in seen["s"]

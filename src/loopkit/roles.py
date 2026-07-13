@@ -50,7 +50,9 @@ ANALYST = Role(
     "QUESTION: <one question, options may span lines>\n"
     "TICKET: <goal, one self-contained module, state any assumptions> DoD: <EARS: WHEN <x> "
     "SHALL <y>; ...> Tests: ```python\n<pytest importing from module `solution`, one test per "
-    "criterion, deterministic, no network/filesystem>\n```",
+    "criterion, deterministic, no network/filesystem>\n```\n"
+    "Với repo pending/hạ tầng, draft PHẢI kèm \"Gate: <one shell command>\" ưu tiên: script "
+    "test sẵn có > helm template+lint / terraform validate / pytest > grep có chủ đích.",
 )
 
 REGISTRY = {r.name: r for r in (ORCHESTRATOR, CODE, INFRA, REVIEWER, ANALYST)}
