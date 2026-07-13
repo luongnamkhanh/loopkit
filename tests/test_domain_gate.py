@@ -417,3 +417,14 @@ def test_brains_short_circuit_under_no_brain(tmp_path, monkeypatch):
     assert "LOOPKIT_NO_BRAIN" in eng.ask_claude("p", "s")
     assert "LOOPKIT_NO_BRAIN" in eng.run_agent("p", "s", workdir=str(tmp_path),
                                                tools=["Read"])
+
+
+def test_gate_env_sanitized(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOOPKIT_ENABLE_TOOLS", "1")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-secret")
+    monkeypatch.setenv("PYTHONPATH", "/elsewhere")
+    ok, detail = gates.make_cmd_gate(
+        'echo "tools=${LOOPKIT_ENABLE_TOOLS:-none} slack=${SLACK_BOT_TOKEN:-none} '
+        'pp=${PYTHONPATH:-none} brain=$LOOPKIT_NO_BRAIN"', str(tmp_path))("")
+    assert ok and "tools=none" in detail and "slack=none" in detail
+    assert "pp=none" in detail and "brain=1" in detail

@@ -45,9 +45,10 @@ def place_and_verify(workspace: str, deliver_path: str):
         tdst = dst.parent / f"test_{module}.py"
         tdst.write_text(src)
         tsrc_f.unlink()
+        from loopkit import gates as _g
         r = subprocess.run(["python3", "-m", "pytest", "-q", tdst.name],
                            cwd=dst.parent, capture_output=True, text=True, timeout=120,
-                           env={**os.environ, "LOOPKIT_NO_BRAIN": "1"})
+                           env=_g._gate_env())
         return r.returncode == 0, (r.stdout + r.stderr).strip()[-700:]
     r = subprocess.run(["python3", "-m", "py_compile", str(dst)],
                        capture_output=True, text=True, timeout=60)

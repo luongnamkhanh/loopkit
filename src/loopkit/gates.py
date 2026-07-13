@@ -102,14 +102,23 @@ def parse_gate_cmd(text: str):
     return m.group(1).strip(), (text[:m.start()] + text[m.end():]).strip()
 
 
+def _gate_env() -> dict:
+    """Env TRUNG TÍNH cho mọi gate subprocess: strip config runtime + secrets của loopkit
+    (suite repo đích không được phụ thuộc LOOPKIT_*; lệnh gate không được thấy token) và
+    PYTHONPATH (repo tự khai trong lệnh nếu cần); LUÔN cấm brain — chống loop lồng nhau."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("LOOPKIT_") or k.startswith("SLACK_") or k == "PYTHONPATH")}
+    env["LOOPKIT_NO_BRAIN"] = "1"
+    return env
+
+
 def make_cmd_gate(cmd: str, workdir: str):
     """Domain gate: lệnh shell deterministic trong worktree. Artifact bị bỏ qua —
     trạng thái nằm trong worktree (edit-in-place). Lỗi/timeout -> FAIL, không raise."""
     def verifier(artifact: str):
         try:
             r = subprocess.run(cmd, shell=True, cwd=workdir, capture_output=True,
-                               text=True, timeout=300,
-                               env={**os.environ, "LOOPKIT_NO_BRAIN": "1"})
+                               text=True, timeout=300, env=_gate_env())
         except subprocess.TimeoutExpired:
             return False, "gate timeout (300s)"
         except OSError as e:
@@ -139,7 +148,7 @@ def make_pytest_gate(tests_src: str, workdir: str):
         (wd / "solution.py").write_text(artifact)
         r = subprocess.run(["python3", "-m", "pytest", "-q", "test_ticket.py"],
                            cwd=wd, capture_output=True, text=True, timeout=120,
-                           env={**os.environ, "LOOPKIT_NO_BRAIN": "1"})
+                           env=_gate_env())
         return r.returncode == 0, (r.stdout + r.stderr).strip()[-700:]
     return verifier
 
