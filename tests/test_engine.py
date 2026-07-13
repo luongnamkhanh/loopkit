@@ -59,6 +59,8 @@ def test_finish_suspended_reject_no_cache_no_artifact(tmp_path):
 
 
 def test_brain_calls_never_inherit_stdin(monkeypatch):
+    monkeypatch.delenv("LOOPKIT_NO_BRAIN", raising=False)   # test đường subprocess thật — phải hermetic với env gate
+
     """CLI bug found live: claude subprocess ate the piped door answer -> door hit EOF.
     Brain subprocesses must run with stdin=DEVNULL."""
     import subprocess as sp
