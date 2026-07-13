@@ -124,3 +124,82 @@ def test_ship_diff_never_raises_on_internal_exception(tmp_path, monkeypatch):
                             emit=events.append, record=lambda e: events.append(e))
     assert res == {"ok": False, "branch": None, "mr_url": None, "error": "exception"}
     assert any(isinstance(e, dict) and e.get("error") == "exception" for e in events)
+
+
+from loopkit.engine import Ticket, run_loop, finish_suspended
+import loopkit.deliver as dmod2
+
+
+def _fake_brain_edit(monkeypatch, tmp_path):
+    import loopkit.engine as eng
+    monkeypatch.setattr(eng, "route", lambda t, roles: "code")
+    monkeypatch.setattr(eng.config, "ENABLE_MEMORY", False)
+    monkeypatch.setattr(eng.config, "ENABLE_TOOLS", True)
+    # generator (run_agent) "sửa" worktree; reviewer (ask_claude) PASS
+    def fake_agent(prompt, soul, workdir, tools, model=None):
+        pathlib.Path(workdir, "values.yaml").write_text("a: 2\n")
+        return "edited"
+    monkeypatch.setattr(eng, "run_agent", fake_agent)
+    monkeypatch.setattr(eng, "ask_claude", lambda p, s, model=None: "VERDICT: PASS")
+    return eng
+
+
+def test_run_loop_edit_mode_diff_artifact_and_ship_diff(tmp_path, monkeypatch):
+    repo, _, ws = make_edit_repo(tmp_path)
+    (ws / "values.yaml").write_text("a: 1\n")             # reset worktree về sạch
+    (ws / "new.yaml").unlink()
+    eng = _fake_brain_edit(monkeypatch, tmp_path)
+    shipped = {}
+    monkeypatch.setattr(dmod2, "ship_diff",
+                        lambda w, r, cmd, g, d, emit=print, record=None:
+                        shipped.update(cmd=cmd) or {"ok": True})
+    t = Ticket(goal="g", dod="d", verifier=gates.make_cmd_gate("true", str(ws)),
+               risky=True, repo=str(repo), gate_cmd="true")
+    res = run_loop(t, human_door=lambda a: True, notify=lambda m: None,
+                   journal_dir=str(tmp_path), memory=None, workspace=str(ws))
+    assert res["ok"] and "values.yaml" in res["artifact"]  # artifact là git diff
+    assert shipped["cmd"] == "true"
+
+
+def test_run_loop_edit_mode_requires_tools(tmp_path, monkeypatch):
+    import loopkit.engine as eng
+    monkeypatch.setattr(eng.config, "ENABLE_TOOLS", False)
+    monkeypatch.setattr(eng.config, "ENABLE_MEMORY", False)
+    t = Ticket(goal="g", dod="d", verifier=lambda a: (True, ""), gate_cmd="true",
+               repo=str(tmp_path))
+    res = run_loop(t, notify=lambda m: None, journal_dir=str(tmp_path),
+                   memory=None, workspace=str(tmp_path))
+    assert not res["ok"] and "ENABLE_TOOLS" in res["reason"]
+
+
+def test_run_loop_edit_mode_empty_diff_fails_gate(tmp_path, monkeypatch):
+    repo, _, ws = make_edit_repo(tmp_path)
+    (ws / "values.yaml").write_text("a: 1\n")
+    (ws / "new.yaml").unlink()
+    eng = _fake_brain_edit(monkeypatch, tmp_path)
+    monkeypatch.setattr(eng, "run_agent", lambda *a, **k: "did nothing")  # không sửa gì
+    t = Ticket(goal="g", dod="d", verifier=gates.make_cmd_gate("true", str(ws)),
+               risky=True, repo=str(repo), gate_cmd="true")
+    res = run_loop(t, human_door=lambda a: True, notify=lambda m: None,
+                   journal_dir=str(tmp_path), memory=None, workspace=str(ws),
+                   max_turns=1)
+    assert not res["ok"]                                   # diff rỗng không bao giờ PASS
+
+
+def test_finish_suspended_edit_mode_routes_and_refuses_lost_worktree(tmp_path, monkeypatch):
+    class FakeMem:
+        def register(self, *a, **k): ...
+        def store(self, *a, **k): ...
+        def append_event(self, *a, **k): ...
+    shipped = []
+    monkeypatch.setattr(dmod2, "ship_diff",
+                        lambda w, r, cmd, g, d, emit=print, record=None:
+                        shipped.append(cmd) or {"ok": True})
+    payload = {"artifact": "diff", "goal": "g", "dod": "d", "mode": "edit",
+               "gate_cmd": "true", "repo": str(tmp_path), "workspace": str(tmp_path)}
+    finish_suspended(FakeMem(), "t", payload, True, lambda m: None)
+    assert shipped == ["true"]
+    msgs = []
+    payload["workspace"] = str(tmp_path / "gone")
+    finish_suspended(FakeMem(), "t", payload, True, msgs.append)
+    assert shipped == ["true"] and any("worktree" in m for m in msgs)  # từ chối, không ship mù

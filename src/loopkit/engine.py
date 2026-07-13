@@ -66,6 +66,7 @@ class Ticket:
     deliver: Optional[str] = None               # Deliver: path (chốt lúc freeze) — spec 2026-07-10
     repo: str = ""                              # repo đích (worktree gốc) cho delivery
     tests_src: str = ""                         # frozen tests (cho door payload re-materialize)
+    gate_cmd: str = ""   # Gate: lệnh domain — truthy = edit-in-place mode (spec 2026-07-13)
 
 def default_human_door(artifact: str) -> bool:
     print("\n🚪 HUMAN DOOR — approval required (wire a Slack [Approve] button here).")
@@ -88,6 +89,13 @@ def route(ticket: "Ticket", roles: dict) -> str:
 
 # ---------- engine ----------
 _RUN_SEQ = itertools.count()
+
+def _worktree_diff(ws) -> str:
+    """Artifact edit-mode: intent-to-add để file MỚI hiện trong diff, không stage nội dung."""
+    subprocess.run(["git", "-C", str(ws), "add", "-N", "."], capture_output=True)
+    r = subprocess.run(["git", "-C", str(ws), "diff", "HEAD"],
+                       capture_output=True, text=True, timeout=60)
+    return r.stdout or ""
 
 def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int] = None,
              human_door: Callable[[str], bool] = default_human_door,
@@ -112,7 +120,7 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
             mem.append_event(thread_id, entry)
 
     # --- semantic recall: an identical VERIFIED ticket skips generation entirely ---
-    if mem:
+    if mem and not ticket.gate_cmd:
         cached = mem.recall(ticket.goal, ticket.dod)
         if cached is not None:
             emit("♻️ recalled a previously verified solution for this exact ticket")
@@ -131,24 +139,37 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
     ctx = f"PROJECT CONTEXT (AGENTS.md):\n{project_context}\n\n" if project_context else ""
     ws = pathlib.Path(workspace) if workspace else None
     tool_mode = bool(config.ENABLE_TOOLS and ws)
+    edit_mode = bool(ticket.gate_cmd)
+    if edit_mode and not tool_mode:
+        record({"stage": "refused", "reason": "edit-mode without tools"})
+        return {"ok": False, "worker": None, "turns": 0,
+                "reason": "edit-mode cần LOOPKIT_ENABLE_TOOLS=1 + workspace"}
     feedback = "no attempt yet"
     for turn in range(1, max_turns + 1):
         gen_prompt = (f"{ctx}GOAL:\n{ticket.goal}\n\nDEFINITION OF DONE:\n{ticket.dod}\n\n"
                       f"FEEDBACK on last attempt:\n{feedback}")
         agent_reply = ""
         if tool_mode:                                                           # GENERATOR (acts)
-            agent_reply = run_agent(
-                gen_prompt + "\n\nACT: write the complete solution to the file "
-                "`solution.py` in the current directory (overwrite it). "
-                "Reply with a one-line summary only.",
-                gen_soul, workdir=ws, tools=allowed_tools(roles[worker]),
-                model=config.ROLE_MODELS.get(worker))
-            sol = ws / "solution.py"
-            artifact = sol.read_text() if sol.exists() else ""   # no file -> fail-closed at gate
+            act = ("\n\nACT: sửa các file trong repo (worktree hiện tại) để đạt GOAL và "
+                   "DEFINITION OF DONE. KHÔNG tạo solution.py. Trả lời MỘT dòng tóm tắt."
+                   if edit_mode else
+                   "\n\nACT: write the complete solution to the file `solution.py` in the "
+                   "current directory (overwrite it). Reply with a one-line summary only.")
+            agent_reply = run_agent(gen_prompt + act, gen_soul, workdir=ws,
+                                    tools=allowed_tools(roles[worker]),
+                                    model=config.ROLE_MODELS.get(worker))
+            if edit_mode:
+                artifact = _worktree_diff(ws)             # diff rỗng -> fail-closed ở dưới
+            else:
+                sol = ws / "solution.py"
+                artifact = sol.read_text() if sol.exists() else ""
         else:                                                                   # GENERATOR (text)
             artifact = extract_code(ask_claude(gen_prompt, gen_soul,
                                                model=config.ROLE_MODELS.get(worker)))
-        gate_pass, gate_detail = ticket.verifier(artifact)                      # GATE (first)
+        if edit_mode and not artifact.strip():            # cmd-gate bỏ qua artifact -> phải chặn ở đây
+            gate_pass, gate_detail = False, "empty diff — generator không sửa file nào"
+        else:
+            gate_pass, gate_detail = ticket.verifier(artifact)                  # GATE (first)
         entry = {"turn": turn, "worker": worker, "gate_pass": gate_pass,
                  "gate": (gate_detail.splitlines()[-1][:120] if gate_detail else "")}
         if not gate_pass:
@@ -162,7 +183,7 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
             record(entry)
             emit(f"🚦 turn {turn}: gate=FAIL — {entry['gate']}{hint}")
             continue
-        if tool_mode:                                                           # REVIEWER (acts)
+        if tool_mode and not edit_mode:                                         # REVIEWER (acts)
             eval_prompt = (f"{ctx}GOAL:\n{ticket.goal}\n\nDEFINITION OF DONE:\n{ticket.dod}\n\n"
                            f"Deterministic gate PASSED: {entry['gate']}\n\n"
                            "The artifact is `./solution.py` (ticket tests, if any, are "
@@ -174,10 +195,11 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
         else:                                                                   # REVIEWER (text)
             eval_prompt = (f"{ctx}GOAL:\n{ticket.goal}\n\nDEFINITION OF DONE:\n{ticket.dod}\n\n"
                            f"Deterministic gate PASSED: {entry['gate']}\n\n"
-                           f"ARTIFACT UNDER REVIEW:\n```\n{artifact}\n```\n"
-                           "Judge the DoD items the gate does NOT cover.")
-            reply = ask_claude(eval_prompt, eval_soul,
-                               model=config.ROLE_MODELS.get("reviewer"))
+                           + (f"ARTIFACT UNDER REVIEW là git diff của thay đổi:\n```\n{artifact}\n```\n"
+                              if edit_mode else
+                              f"ARTIFACT UNDER REVIEW:\n```\n{artifact}\n```\n")
+                           + "Judge the DoD items the gate does NOT cover.")
+            reply = ask_claude(eval_prompt, eval_soul, model=config.ROLE_MODELS.get("reviewer"))
         # Live finding: reviewers sometimes bury the verdict under reasoning. Accept the first
         # line starting with VERDICT: anywhere in the reply; absent -> fail-closed (REJECT).
         verdict = next((l.strip() for l in reply.splitlines()
@@ -195,7 +217,12 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
                 if (not ticket.risky) or approved:
                     mem.store(ticket.goal, ticket.dod, artifact)   # cache only VERIFIED(+approved)
             record({"stage": "done", "turn": turn, "approved": approved})
-            if (approved and ticket.risky and ticket.deliver and ticket.repo
+            if (approved and ticket.risky and ticket.gate_cmd and ticket.repo
+                    and ws and config.DELIVER):
+                from loopkit import deliver as _deliver
+                _deliver.ship_diff(str(ws), ticket.repo, ticket.gate_cmd,
+                                   ticket.goal, ticket.dod, emit=emit, record=record)
+            elif (approved and ticket.risky and ticket.deliver and ticket.repo
                     and ws and config.DELIVER):
                 from loopkit import deliver as _deliver       # lazy: deliver imports engine
                 _deliver.ship(str(ws), ticket.repo, ticket.deliver,
@@ -222,6 +249,20 @@ def finish_suspended(mem, thread_id: str, payload: dict, decision: bool,
         mem.store(payload.get("goal", ""), payload.get("dod", ""), artifact)
         notify("✅ approved (resumed sau restart)")
         notify(f"📦 artifact:\n```\n{guard(artifact[:2500])}\n```")
+        if payload.get("mode") == "edit" and payload.get("gate_cmd") and config.DELIVER:
+            ws = payload.get("workspace", "")
+            if not (ws and pathlib.Path(ws).exists()):
+                notify("🚫 không ship được: worktree đã mất (edit-mode không re-materialize "
+                       "từ diff) — chạy lại ticket.")
+                return
+            from loopkit import deliver as _deliver
+            _deliver.ship_diff(ws, payload.get("repo", ""), payload["gate_cmd"],
+                               payload.get("goal", ""), payload.get("dod", ""),
+                               emit=lambda m: notify(guard(m)),
+                               record=lambda e: mem.append_event(thread_id, {
+                                   k: (guard(v) if isinstance(v, str) else v)
+                                   for k, v in e.items()}))
+            return
         if payload.get("deliver") and config.DELIVER:
             from loopkit import deliver as _deliver           # lazy: tránh vòng import
             ws = _deliver.ensure_workspace(thread_id, payload.get("repo", ""), artifact,
