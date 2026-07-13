@@ -428,3 +428,16 @@ def test_gate_env_sanitized(tmp_path, monkeypatch):
         'pp=${PYTHONPATH:-none} brain=$LOOPKIT_NO_BRAIN"', str(tmp_path))("")
     assert ok and "tools=none" in detail and "slack=none" in detail
     assert "pp=none" in detail and "brain=1" in detail
+
+
+def test_brains_timeout_returns_sentinel_not_raise(tmp_path, monkeypatch):
+    import loopkit.engine as eng
+    monkeypatch.delenv("LOOPKIT_NO_BRAIN", raising=False)
+
+    def slow(*a, **k):
+        raise eng.subprocess.TimeoutExpired("claude", 600)
+    monkeypatch.setattr(eng.subprocess, "run", slow)
+    out = eng.ask_claude("p", "s")
+    assert "LOOPKIT_TIMEOUT" in out            # không raise — loop retry được
+    out2 = eng.run_agent("p", "s", workdir=str(tmp_path), tools=["Read"])
+    assert "LOOPKIT_TIMEOUT" in out2

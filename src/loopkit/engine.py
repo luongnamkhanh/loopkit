@@ -32,8 +32,11 @@ def ask_claude(prompt: str, soul: str, model: Optional[str] = None) -> str:
     cmd = ["claude", "-p", f"{soul}\n\n{prompt}"]
     if model:
         cmd += ["--model", model]
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                       timeout=config.CLAUDE_TIMEOUT, cwd=str(wd))
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           timeout=config.CLAUDE_TIMEOUT, cwd=str(wd))
+    except subprocess.TimeoutExpired:            # timeout = một lượt hỏng, KHÔNG giết run
+        return f"LOOPKIT_TIMEOUT: brain quá {config.CLAUDE_TIMEOUT}s — trả lời gọn hơn"
     return (r.stdout or r.stderr).strip()
 
 def run_agent(prompt: str, soul: str, *, workdir, tools, model: Optional[str] = None) -> str:
@@ -46,8 +49,12 @@ def run_agent(prompt: str, soul: str, *, workdir, tools, model: Optional[str] = 
     cmd = ["claude", "-p", f"{soul}\n\n{prompt}", "--allowedTools", ",".join(tools)]
     if model:
         cmd += ["--model", model]
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                       timeout=config.AGENT_TIMEOUT, cwd=str(workdir))
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           timeout=config.AGENT_TIMEOUT, cwd=str(workdir))
+    except subprocess.TimeoutExpired:            # timeout = một lượt hỏng, KHÔNG giết run —
+        return (f"LOOPKIT_TIMEOUT: agent quá {config.AGENT_TIMEOUT}s"   # diff dở dang (nếu có)
+                " — chia nhỏ thay đổi")                                  # để gate/reviewer xử
     return (r.stdout or r.stderr).strip()
 
 
