@@ -501,7 +501,7 @@ def _worktree_diff(ws) -> str:
 
 **Interfaces:**
 - Produces (cả hai fronts, logic giống nhau — làm helper chung trong deliver.py? KHÔNG: 10 dòng/front, giữ tại chỗ):
-  - parse: sau `parse_repo` → `gate_cmd, text = gates.parse_gate_cmd(text)`; nếu `gate_cmd và deliver_path` → warn "Gate: là edit-mode — bỏ qua Deliver:" + deliver_path=None.
+  - parse: sau `parse_repo` → `parse_deliver` TRƯỚC rồi mới `parse_gate_cmd` (Deliver: cùng dòng sẽ bị Gate-regex nuốt nếu ngược thứ tự); nếu `gate_cmd và deliver_path` → warn "Gate: là edit-mode — bỏ qua Deliver:" + deliver_path=None.
   - pending-repo check ĐỔI: `repo_name in config.REPOS_PENDING` và `gate_cmd is None` → `gate_cmd = deliver.infer_gate(goal, dod, repo_path)`; vẫn None → từ chối "repo này cần Gate: — mô tả cách verify trong ticket/idea"; có → emit `🛡 Gate (AI đề xuất): <cmd>`.
   - edit-mode setup: `gate_cmd` truthy → đòi `repo và config.ENABLE_TOOLS` (thiếu → từ chối); `verifier = gates.make_cmd_gate(gate_cmd, wd)`; `frozen_tests = ""`; pre-flight `pre_ok, _ = verifier("")` → `gate_label = "⚠️ gate XANH trước khi sửa — chỉ chống vỡ, không chứng minh DoD" if pre_ok else "🔴 acceptance gate (đỏ trước khi sửa)"`; emit label; skip freeze_deliver (`deliver_path=None`).
   - `Ticket(..., gate_cmd=gate_cmd or "")`; door hiển thị + payload: thêm `mode: "edit" if gate_cmd else "module"`, `gate_cmd`; CLI `terminal_door(artifact, deliver=None, gate=None)` in dòng `🛡 Gate: <cmd>`; cmd_ticket_run in marker `GATE: <cmd>` sau ARTIFACT_END; Telegram door text thêm dòng `🛡 Gate: <cmd>\n<label>`.
