@@ -115,7 +115,7 @@ def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api,
 
 
 def launch_ticket(text: str, thread: str, mem, api) -> None:
-    repo_name, text = gates.parse_repo(text)
+    repo_name, text = gates.parse_repo(text, config.REPOS)
     deliver_path, text = gates.parse_deliver(text)
     gate_cmd, text = gates.parse_gate_cmd(text)
     goal, dod, tests_src = gates.parse_ticket(text)
