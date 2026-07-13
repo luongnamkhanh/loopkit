@@ -73,10 +73,14 @@ _GATE_RE = re.compile(r"(?i)\bgate:\s*([^\n]+)")
 
 def parse_gate_cmd(text: str):
     """'Gate: <lệnh đến hết dòng>' -> (cmd, text đã strip). Không có -> (None, text).
-    Gate: có mặt = ticket chạy edit-in-place mode (spec 2026-07-13)."""
-    m = _GATE_RE.search(text or "")
+    Chỉ tìm trong phần TRƯỚC 'DoD:' — chữ "gate:" trong văn xuôi DoD không bị nuốt
+    (cùng lớp hazard với Tests:, xem _looks_like_tests). Gate: có mặt = edit-in-place mode."""
+    text = text or ""
+    d = re.search(r"(?i)\bdod:", text)
+    scope = text[:d.start()] if d else text
+    m = _GATE_RE.search(scope)
     if not m:
-        return None, text or ""
+        return None, text
     return m.group(1).strip(), (text[:m.start()] + text[m.end():]).strip()
 
 
