@@ -162,7 +162,10 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
     emit(f"🧩 routed → {worker} agent")
     ctx = f"PROJECT CONTEXT (AGENTS.md):\n{project_context}\n\n" if project_context else ""
     feedback = "no attempt yet"
+    history = []   # [(turn, reason)] accumulated failures — newest-last; read back newest-first, capped
     for turn in range(1, max_turns + 1):
+        if history:
+            feedback = "\n\n".join(f"[turn {t}] {reason[:500]}" for t, reason in history[-3:][::-1])
         gen_prompt = (f"{ctx}GOAL:\n{ticket.goal}\n\nDEFINITION OF DONE:\n{ticket.dod}\n\n"
                       f"FEEDBACK on last attempt:\n{feedback}")
         agent_reply = ""
@@ -190,7 +193,7 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
         entry = {"turn": turn, "worker": worker, "gate_pass": gate_pass,
                  "gate": (gate_detail.splitlines()[-1][:120] if gate_detail else "")}
         if not gate_pass:
-            feedback = f"Deterministic gate FAILED:\n{gate_detail}"
+            history.append((turn, f"Deterministic gate FAILED:\n{gate_detail}"))
             entry["stage"] = "gate_fail"
             hint = ""
             if tool_mode and not artifact:       # observability (live gap): surface WHY the
@@ -247,7 +250,7 @@ def run_loop(ticket: Ticket, *, roles: dict = REGISTRY, max_turns: Optional[int]
                               ticket.goal, ticket.dod, emit=emit, record=record)
             return {"ok": True, "cached": False, "worker": worker, "turns": turn,
                     "approved": approved, "artifact": artifact}
-        feedback = f"Reviewer REJECTED:\n{reply}"                               # FEEDBACK -> loop
+        history.append((turn, f"Reviewer REJECTED:\n{reply}"))                  # FEEDBACK -> loop
     if mem:
         mem.register(thread_id, status="exhausted", turns=max_turns)
     record({"stage": "exhausted", "turns": max_turns})
