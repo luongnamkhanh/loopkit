@@ -478,3 +478,94 @@ def test_issues_command_empty_or_no_cli_friendly(monkeypatch, tmp_path):
     api, mem = TgStub(), MStub()
     tgf.handle_message({"message_id": 1, "text": "/issues"}, mem, api)
     assert any("không" in s.lower() or "không tra" in s.lower() for s in api.sent)  # báo hiền, không crash
+
+
+def test_fetch_issue_success_returns_stdout(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    monkeypatch.setattr(tgf.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "body"})())
+    assert tgf.fetch_issue(str(tmp_path), 6) == "body"
+
+
+def test_fetch_issue_nonzero_returns_none(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    monkeypatch.setattr(tgf.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 1, "stdout": ""})())
+    assert tgf.fetch_issue(str(tmp_path), 6) is None
+
+
+def test_fetch_issue_missing_cli_returns_none(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: None)
+    assert tgf.fetch_issue(str(tmp_path), 6) is None
+
+
+def test_resolve_fetches_issue_and_seeds_refine(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "REPOS", {"loopkit": str(tmp_path)})
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/o/loopkit.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    seen = {}
+
+    def fr(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        seen["cmd"], seen["cwd"] = cmd, cwd
+        return type("R", (), {"returncode": 0, "stdout": "Bug: crash on save"})()
+    monkeypatch.setattr(tgf.subprocess, "run", fr)
+    calls = []
+    monkeypatch.setattr(tgf, "refine_step",
+                        lambda thread, answer, mem, api: calls.append((thread, answer)))
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 5, "text": "/resolve #6 loopkit"}, mem, api)
+    assert seen["cmd"] == ["gh", "issue", "view", "6"] and seen["cwd"] == str(tmp_path)
+    assert len(calls) == 1 and calls[0][1] is None
+    run = mem.get_run(calls[0][0])
+    assert run["status"] == "refining" and run["refine_turns"] == 0
+    idea = run["idea"]
+    assert "Bug: crash on save" in idea and "Repo: loopkit" in idea and "#6" in idea
+
+
+def test_resolve_unknown_repo_stops(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "REPOS", {"loopkit": str(tmp_path)})
+    calls = []
+    monkeypatch.setattr(tgf, "refine_step", lambda *a, **k: calls.append(1))
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 6, "text": "/resolve #6 nope"}, mem, api)
+    assert not calls
+    assert any("loopkit" in s for s in api.sent)
+
+
+def test_resolve_fetch_fail_friendly(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tgf.config, "REPOS", {})
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: None)     # gh thiếu
+    calls = []
+    monkeypatch.setattr(tgf, "refine_step", lambda *a, **k: calls.append(1))
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 7, "text": "/resolve #6"}, mem, api)
+    assert not calls
+    assert any("#6" in s for s in api.sent)
+    assert not mem.runs()
+
+
+def test_resolve_number_without_hash(monkeypatch, tmp_path):
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", str(tmp_path))
+    monkeypatch.setattr(tgf.config, "REPOS", {})
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/x/y.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    seen = {}
+
+    def fr(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        seen["cmd"] = cmd
+        return type("R", (), {"returncode": 0, "stdout": "issue body"})()
+    monkeypatch.setattr(tgf.subprocess, "run", fr)
+    calls = []
+    monkeypatch.setattr(tgf, "refine_step",
+                        lambda thread, answer, mem, api: calls.append(thread))
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 8, "text": "/resolve 6"}, mem, api)
+    assert seen["cmd"] == ["gh", "issue", "view", "6"]
+    idea = mem.get_run(calls[0])["idea"]
+    assert "pytest" in idea and "#6" in idea
