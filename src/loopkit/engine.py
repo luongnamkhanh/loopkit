@@ -21,6 +21,21 @@ from loopkit.memory import Memory
 from loopkit.roles import REGISTRY, allowed_tools
 
 # ---------- brain ----------
+_RETRY_DELAYS = (2, 4)   # backoff (s) cho lỗi kết nối tạm thời — KHÔNG áp dụng cho TimeoutExpired
+
+def _run_subprocess(cmd, cwd, timeout):
+    """subprocess.run wrapper: retry tối đa len(_RETRY_DELAYS) lần khi gặp ConnectionError (và
+    subclass như ConnectionRefusedError) — lỗi kết nối tạm thời. TimeoutExpired KHÔNG bắt ở đây
+    -> propagate ngay, không retry một call đã treo hết timeout."""
+    for attempt, delay in enumerate(_RETRY_DELAYS):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                   timeout=timeout, cwd=str(cwd))
+        except ConnectionError:
+            time.sleep(delay)
+    return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                          timeout=timeout, cwd=str(cwd))
+
 def ask_claude(prompt: str, soul: str, model: Optional[str] = None) -> str:
     if os.environ.get("LOOPKIT_NO_BRAIN"):     # gate context: cấm brain — chống loop lồng nhau
         return "LOOPKIT_NO_BRAIN: brain bị cấm trong gate context (test không hermetic?)"
@@ -33,10 +48,11 @@ def ask_claude(prompt: str, soul: str, model: Optional[str] = None) -> str:
     if model:
         cmd += ["--model", model]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                           timeout=config.CLAUDE_TIMEOUT, cwd=str(wd))
+        r = _run_subprocess(cmd, wd, config.CLAUDE_TIMEOUT)
     except subprocess.TimeoutExpired:            # timeout = một lượt hỏng, KHÔNG giết run
         return f"LOOPKIT_TIMEOUT: brain quá {config.CLAUDE_TIMEOUT}s — trả lời gọn hơn"
+    except ConnectionError:                       # hết retry vẫn lỗi -> sentinel, không raise
+        return "LOOPKIT_CONN_ERROR: brain mất kết nối sau retry"
     return (r.stdout or r.stderr).strip()
 
 def run_agent(prompt: str, soul: str, *, workdir, tools, model: Optional[str] = None) -> str:
@@ -50,11 +66,12 @@ def run_agent(prompt: str, soul: str, *, workdir, tools, model: Optional[str] = 
     if model:
         cmd += ["--model", model]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                           timeout=config.AGENT_TIMEOUT, cwd=str(workdir))
+        r = _run_subprocess(cmd, workdir, config.AGENT_TIMEOUT)
     except subprocess.TimeoutExpired:            # timeout = một lượt hỏng, KHÔNG giết run —
         return (f"LOOPKIT_TIMEOUT: agent quá {config.AGENT_TIMEOUT}s"   # diff dở dang (nếu có)
                 " — chia nhỏ thay đổi")                                  # để gate/reviewer xử
+    except ConnectionError:                       # hết retry vẫn lỗi -> sentinel, không raise
+        return "LOOPKIT_CONN_ERROR: agent mất kết nối sau retry"
     return (r.stdout or r.stderr).strip()
 
 

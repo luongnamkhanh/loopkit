@@ -87,6 +87,43 @@ def test_feedback_accumulates_across_turns(tmp_path, monkeypatch):
     assert "turn 1 problem" in gen_prompts[2] and "turn 2 problem" in gen_prompts[2]
 
 
+def test_ask_claude_retries_connection_error_then_succeeds(monkeypatch):
+    """Issue #7: transient ConnectionError on the claude subprocess -> retry (2s, 4s backoff),
+    3rd attempt succeeds -> caller sees the good result, not a sentinel."""
+    monkeypatch.delenv("LOOPKIT_NO_BRAIN", raising=False)
+    calls = {"n": 0}
+    sleeps = []
+
+    def fake_run(cmd, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ConnectionError("boom")
+        class R: stdout, stderr = "ok", ""
+        return R()
+
+    monkeypatch.setattr(engine.subprocess, "run", fake_run)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: sleeps.append(s))
+    assert engine.ask_claude("p", "s") == "ok"
+    assert calls["n"] == 3
+    assert sleeps == [2, 4]
+
+
+def test_ask_claude_timeout_not_retried(monkeypatch):
+    """TimeoutExpired must keep the old sentinel behavior — never retried (a hung 20-min
+    call must not be repeated)."""
+    monkeypatch.delenv("LOOPKIT_NO_BRAIN", raising=False)
+    calls = {"n": 0}
+
+    def fake_run(cmd, **kw):
+        calls["n"] += 1
+        raise engine.subprocess.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"))
+
+    monkeypatch.setattr(engine.subprocess, "run", fake_run)
+    result = engine.ask_claude("p", "s")
+    assert calls["n"] == 1
+    assert result.startswith("LOOPKIT_TIMEOUT")
+
+
 def test_brain_calls_never_inherit_stdin(monkeypatch):
     monkeypatch.delenv("LOOPKIT_NO_BRAIN", raising=False)   # test đường subprocess thật — phải hermetic với env gate
 
