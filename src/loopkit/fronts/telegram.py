@@ -42,6 +42,25 @@ def fetch_issues(repo_path: str):
         return None
 
 
+def fetch_issue(repo_path: str, number):
+    """`gh/glab issue view <N>` trên repo (host detect từ remote). -> stdout | None (lỗi/CLI thiếu/
+    không remote — không raise). Dùng cho lệnh /resolve."""
+    if not repo_path:
+        return None
+    try:
+        remote = deliver._remote_url(repo_path)
+        if not remote:
+            return None
+        tool = "gh" if "github.com" in remote else "glab"
+        if not shutil.which(tool):
+            return None
+        r = subprocess.run([tool, "issue", "view", str(number)], cwd=repo_path,
+                           capture_output=True, text=True, timeout=30)
+        return r.stdout if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def enrich_idea_with_issue(text: str, repo_name) -> str:
     """Idea nhắc issue (chữ 'issue' hoặc '#<số>') -> append nội dung `gh/glab issue view/list`
     trước khi analyst đọc. Repo: token (qua config.REPOS) > LOOPKIT_TARGET_REPO; host detect từ
@@ -270,8 +289,39 @@ def handle_message(msg: dict, mem, api) -> None:
                 api.send("🙅 Không tra được issue (repo chưa cấu hình / thiếu gh|glab / không remote).")
             else:
                 api.send(f"🐛 Issues ({name or 'target'}):\n{out.strip() or '(0 open issue)'}"[:3500])
+        elif cmd == "/resolve":                          # issue -> analyst draft ticket (four-eyes vẫn giữ)
+            m = re.match(r"#?(\d+)$", parts[1]) if len(parts) > 1 else None
+            if not m:
+                api.send("Cú pháp: /resolve <#N> [repo]")
+                return
+            number = m.group(1)
+            name = parts[2] if len(parts) > 2 else None
+            if name:
+                repo_path = config.REPOS.get(name)
+                if not repo_path:
+                    api.send(f"🙅 Repo `{name}` không có. Hợp lệ: {', '.join(sorted(config.REPOS)) or '(trống)'}")
+                    return
+            else:
+                repo_path = config.TARGET_REPO
+            out = fetch_issue(repo_path, number)
+            if out is None:
+                api.send(f"🙅 Không lấy được issue #{number} (repo chưa cấu hình / thiếu gh|glab / không remote).")
+                return
+            repo_key = name or next((n for n, p in config.REPOS.items() if p == config.TARGET_REPO), None)
+            has_tests = bool(repo_path) and pathlib.Path(repo_path, "tests").is_dir()
+            gate_hint = ("Gate: python3 -m pytest tests -q" if has_tests else
+                         "Đề xuất một Gate command verify được issue này (chưa có tests/ sẵn).")
+            idea = (f"Resolve issue #{number}\n" +
+                    (f"Repo: {repo_key}\n" if repo_key else "") +
+                    f"{gate_hint}\n\n"
+                    "Viết Goal + EARS DoD dựa trên issue dưới đây; nếu là feature, DoD PHẢI yêu cầu test mới.\n\n"
+                    f"--- issue #{number} ---\n{_mask(out.strip()[:1500])}")
+            thread = f"tg-{msg['message_id']}"
+            mem.register(thread, status="refining", idea=idea, refine_turns=0)
+            refine_step(thread, None, mem, api)
         else:
-            api.send("Lệnh không biết — có /status, /issues [repo]. (idea/ticket thì nhắn thường)")
+            api.send("Lệnh không biết — có /status, /issues [repo], /resolve <#N> [repo]. "
+                     "(idea/ticket thì nhắn thường)")
         return
     repo_name, stripped = gates.parse_repo(text, config.REPOS)
     _, dod, _ = gates.parse_ticket(gates.parse_deliver(stripped)[1])
