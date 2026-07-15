@@ -124,4 +124,4 @@ design; add when real runs demand them.
 - **Phase 3 — agent depth:** brain upgrade (real tool execution) · per-role model tiering ·
   worktree isolation · thread follow-ups
 - **Phase 4 — roof (needs real-run data):** §8.1 durable → §8.3 calibration → §8.4 golden set →
-  §8.2 automated risk classification
+  §8.2 automated risk classification (token/cost budget = wontfix 2026-07-15: MAX_TURNS+timeout đủ chặn; wall-clock budget nếu cần)
