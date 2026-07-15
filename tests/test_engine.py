@@ -58,6 +58,35 @@ def test_finish_suspended_reject_no_cache_no_artifact(tmp_path):
     assert not any("X=1" in m for m in msgs)                # and never deliver it
 
 
+def test_feedback_accumulates_across_turns(tmp_path, monkeypatch):
+    """Issue #6: turn 3's generator prompt must carry BOTH turn 1's and turn 2's reject reason,
+    not just the immediately preceding one."""
+    gen_prompts = []
+    state = {"reviewer_calls": 0}
+
+    def fake(prompt, soul, model=None):
+        if soul == roles.REGISTRY["orchestrator"].soul:
+            return "code"
+        if soul == roles.REGISTRY["reviewer"].soul:
+            state["reviewer_calls"] += 1
+            if state["reviewer_calls"] < 3:
+                return f"VERDICT: REJECT because of turn {state['reviewer_calls']} problem"
+            return "VERDICT: PASS"
+        gen_prompts.append(prompt)
+        return "```python\nX = 1\n```"
+
+    monkeypatch.setattr(engine, "ask_claude", fake)
+    monkeypatch.setattr(config, "ENABLE_MEMORY", False)
+    t = Ticket(goal="g", dod="d", verifier=lambda a: (True, "ok"))
+    res = run_loop(t, journal_dir=str(tmp_path), notify=lambda m: None, max_turns=3)
+
+    assert res["ok"] is True and res["turns"] == 3
+    assert len(gen_prompts) == 3
+    assert "no attempt yet" in gen_prompts[0]
+    assert "turn 1 problem" in gen_prompts[1] and "turn 2 problem" not in gen_prompts[1]
+    assert "turn 1 problem" in gen_prompts[2] and "turn 2 problem" in gen_prompts[2]
+
+
 def test_brain_calls_never_inherit_stdin(monkeypatch):
     monkeypatch.delenv("LOOPKIT_NO_BRAIN", raising=False)   # test đường subprocess thật — phải hermetic với env gate
 
