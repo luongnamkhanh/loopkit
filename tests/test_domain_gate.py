@@ -569,3 +569,22 @@ def test_resolve_number_without_hash(monkeypatch, tmp_path):
     assert seen["cmd"] == ["gh", "issue", "view", "6"]
     idea = mem.get_run(calls[0])["idea"]
     assert "pytest" in idea and "#6" in idea
+
+
+def test_repos_command_lists_names_with_marks(monkeypatch):
+    monkeypatch.setattr(tgf.config, "REPOS", {"loopkit": "/a", "pipeline": "/b", "iac": "/c"})
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", "/b")     # pipeline là default
+    monkeypatch.setattr(tgf.config, "REPOS_PENDING", {"iac"})
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/repos"}, mem, api)
+    out = api.sent[-1]
+    assert "loopkit" in out and "pipeline" in out and "iac" in out
+    assert "⭐default" in out and "pipeline ⭐default" in out    # default đúng repo
+    assert "iac ⏳pending" in out                               # pending đúng repo
+
+
+def test_repos_command_empty(monkeypatch):
+    monkeypatch.setattr(tgf.config, "REPOS", {})
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/repos"}, mem, api)
+    assert any("chưa cấu hình" in s for s in api.sent)
