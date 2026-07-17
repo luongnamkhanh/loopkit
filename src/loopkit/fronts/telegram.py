@@ -319,8 +319,19 @@ def handle_message(msg: dict, mem, api) -> None:
             thread = f"tg-{msg['message_id']}"
             mem.register(thread, status="refining", idea=idea, refine_turns=0)
             refine_step(thread, None, mem, api)
+        elif cmd == "/repos":                            # liệt kê tên repo — khỏi phải nhớ
+            if not config.REPOS:
+                api.send("(chưa cấu hình repo nào — đặt LOOPKIT_REPOS)")
+                return
+            lines = []
+            for n, p in sorted(config.REPOS.items()):
+                mark = " ⭐default" if p == config.TARGET_REPO else ""
+                mark += " ⏳pending" if n in config.REPOS_PENDING else ""
+                lines.append(f"• {n}{mark}")
+            api.send("📁 Repos:\n" + "\n".join(lines) +
+                     "\n\nDùng: /issues <tên> · /resolve <#N> <tên>")
         else:
-            api.send("Lệnh không biết — có /status, /issues [repo], /resolve <#N> [repo]. "
+            api.send("Lệnh không biết — có /status, /repos, /issues [repo], /resolve <#N> [repo]. "
                      "(idea/ticket thì nhắn thường)")
         return
     repo_name, stripped = gates.parse_repo(text, config.REPOS)
