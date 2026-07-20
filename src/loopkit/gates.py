@@ -106,7 +106,10 @@ def parse_gate_cmd(text: str):
     m = _GATE_RE.search(scope)
     if not m:
         return None, text
-    return m.group(1).strip(), (text[:m.start()] + text[m.end():]).strip()
+    # strip markdown backtick wrap — sh -c hiểu `cmd` là command substitution:
+    # pytest chạy xong thì stdout của nó bị execute ("....: command not found")
+    cmd = m.group(1).strip().strip("`").strip()
+    return cmd, (text[:m.start()] + text[m.end():]).strip()
 
 
 def _gate_env() -> dict:

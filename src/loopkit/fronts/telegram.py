@@ -330,9 +330,27 @@ def handle_message(msg: dict, mem, api) -> None:
                 lines.append(f"• {n}{mark}")
             api.send("📁 Repos:\n" + "\n".join(lines) +
                      "\n\nDùng: /issues <tên> · /resolve <#N> <tên>")
+        elif cmd == "/cancel":                           # thoát refinement kẹt (issue #15)
+            awaiting = [t for t, r in mem.runs().items() if r.get("status") in _AWAITING]
+            target = parts[1] if len(parts) > 1 else None
+            if target:
+                run = mem.get_run(target)
+                if run.get("status") not in _AWAITING:
+                    api.send(f"🙅 `{target}` không ở trạng thái chờ (status={run.get('status') or 'không có'}).")
+                    return
+                mem.register(target, status="refine_cancelled")
+                api.send(f"🚫 Đã huỷ `{target}`.")
+            elif len(awaiting) == 1:
+                mem.register(awaiting[0], status="refine_cancelled")
+                api.send(f"🚫 Đã huỷ `{awaiting[0]}`.")
+            elif not awaiting:
+                api.send("(không có thread nào đang chờ)")
+            else:
+                api.send("Nhiều thread đang chờ — /cancel <thread>:\n" +
+                         "\n".join(f"• {t}" for t in awaiting))
         else:
-            api.send("Lệnh không biết — có /status, /repos, /issues [repo], /resolve <#N> [repo]. "
-                     "(idea/ticket thì nhắn thường)")
+            api.send("Lệnh không biết — có /status, /repos, /issues [repo], /resolve <#N> [repo], "
+                     "/cancel [thread]. (idea/ticket thì nhắn thường)")
         return
     repo_name, stripped = gates.parse_repo(text, config.REPOS)
     _, dod, _ = gates.parse_ticket(gates.parse_deliver(stripped)[1])
