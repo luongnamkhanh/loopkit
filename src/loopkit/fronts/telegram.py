@@ -61,6 +61,34 @@ def fetch_issue(repo_path: str, number):
         return None
 
 
+def _create_issues(repo_path: str, items) -> list:
+    """`gh/glab issue create --title <item>` cho mỗi item trong repo_path (host detect từ remote,
+    cùng pattern fetch_issues). Item lỗi bị skip (không chặn item còn lại); không remote/thiếu
+    CLI/exception -> [] (không raise) — defer:create tuỳ đó báo hiền, không crash."""
+    if not repo_path:
+        return []
+    try:
+        remote = deliver._remote_url(repo_path)
+        if not remote:
+            return []
+        tool = "gh" if "github.com" in remote else "glab"
+        if not shutil.which(tool):
+            return []
+    except Exception:
+        return []
+    urls = []
+    for item in items:
+        try:
+            r = subprocess.run([tool, "issue", "create", "--title", item[:200]],
+                               cwd=repo_path, capture_output=True, text=True, timeout=30)
+            m = re.search(r"https://\S+", r.stdout or "")
+            if r.returncode == 0 and m:
+                urls.append(m.group(0))
+        except Exception:
+            continue
+    return urls
+
+
 def agents_context(repo_path, cap=2500) -> str:
     """Đầu AGENTS.md của repo đích -> chuỗi nhét vào refine context (issue #14): analyst thấy
     tech-stack/quy ước repo đã ghi, khỏi hỏi lại. Front-side (engine vẫn brain-agnostic).
@@ -141,13 +169,13 @@ class TgApi:
 
 
 def make_tg_door(mem, thread, goal, dod, deliver_path, repo, ws, tests, api,
-                 gate_cmd="", gate_label="", mode="module"):
+                 gate_cmd="", gate_label="", mode="module", deferred=()):
     """Suspend door: persist đủ payload cho finish_suspended rồi trả False — không block poll."""
     def door(artifact: str) -> bool:
         mem.door_open(thread, {"channel": "telegram", "artifact": artifact, "goal": goal,
                                "dod": dod, "deliver": deliver_path, "repo": repo,
                                "workspace": ws, "tests": tests, "gate_cmd": gate_cmd,
-                               "mode": mode, "gate_label": gate_label})
+                               "mode": mode, "gate_label": gate_label, "deferred": deferred})
         if mode == "edit":
             text = (f"🚪 Diff chờ duyệt:\n🛡 Gate: {gate_cmd}\n{gate_label}\n"
                     f"{_mask((artifact or '')[:2500])}")
@@ -167,6 +195,7 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     repo_name, text = gates.parse_repo(text, config.REPOS)
     deliver_path, text = gates.parse_deliver(text)
     gate_cmd, text = gates.parse_gate_cmd(text)
+    deferred, text = gates.parse_deferred(text)
     goal, dod, tests_src = gates.parse_ticket(text)
     if not dod:
         api.send("🙅 Thiếu DoD.")
@@ -229,7 +258,8 @@ def launch_ticket(text: str, thread: str, mem, api) -> None:
     res = run_loop(t, human_door=make_tg_door(mem, thread, goal, dod, dpath or "",
                                               repo_path or "", wd, frozen_tests, api,
                                               gate_cmd=gate_cmd or "", gate_label=gate_label,
-                                              mode="edit" if gate_cmd else "module"),
+                                              mode="edit" if gate_cmd else "module",
+                                              deferred=deferred),
                    notify=api.send,
                    project_context=("" if (repo_path and config.ENABLE_TOOLS)
                                     else read_agents_md(".")),
@@ -402,7 +432,31 @@ def handle_callback(cb: dict, mem, api) -> None:
         mem.door_close(thread)
         if mid:
             api.clear_buttons(mid)                       # chống double-click
+        if decision and door.get("deferred"):             # issue #16: offer follow-up creation
+            items = list(door["deferred"])
+            mem.register(thread, deferred=items, deferred_repo=door.get("repo", ""))
+            api.send("📌 " + str(len(items)) + " việc hoãn lại:\n" +
+                     "\n".join("• " + i for i in items),
+                     keyboard=[[{"text": "📌 Tạo follow-up issue",
+                                 "callback_data": f"defer:create:{thread}"}]])
         api.answer_callback(cb.get("id", ""), "✅ approved" if decision else "🚫 rejected")
+        return
+    if kind == "defer" and action == "create":
+        run = mem.get_run(thread)
+        items = run.get("deferred") or []
+        repo_path = run.get("deferred_repo") or config.TARGET_REPO
+        if not items:
+            api.answer_callback(cb.get("id", ""), "không có việc hoãn")
+            return
+        urls = _create_issues(repo_path, items)
+        if urls:
+            api.send("✅ Đã tạo:\n" + "\n".join(urls))
+            if mid:
+                api.clear_buttons(mid)
+            mem.register(thread, deferred=[])              # chống double-tap tạo trùng issue
+        else:
+            api.send("🙅 không tạo được issue (thiếu gh|glab / không remote)")
+        api.answer_callback(cb.get("id", ""))
         return
     if kind == "draft":
         run = mem.get_run(thread)

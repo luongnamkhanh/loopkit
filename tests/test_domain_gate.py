@@ -252,10 +252,20 @@ from loopkit.fronts import cli as clif
 class TgStub:
     def __init__(self):
         self.sent = []
+        self.keyboards = []
+        self.answered = []
+        self.cleared = []
 
     def send(self, text, reply_to=None, keyboard=None):
         self.sent.append(text)
+        self.keyboards.append(keyboard)
         return len(self.sent)
+
+    def answer_callback(self, cb_id, text=""):
+        self.answered.append(text)
+
+    def clear_buttons(self, message_id):
+        self.cleared.append(message_id)
 
 
 class MStub:
@@ -276,6 +286,12 @@ class MStub:
 
     def door_get(self, t):
         return self.doors.get(t)
+
+    def door_close(self, t):
+        self.doors.pop(t, None)
+
+    def audit(self, t, approver, decision):
+        ...
 
     def recall(self, g, d):
         return None
@@ -679,3 +695,79 @@ def test_agents_context_masks_secrets(tmp_path, monkeypatch):
     (tmp_path / "AGENTS.md").write_text("Contact: dev@example.com token=abcd1234secret")
     out = tgf.agents_context(str(tmp_path))
     assert "dev@example.com" not in out and "abcd1234secret" not in out   # secret bị mask trước khi persist
+
+
+# --- issue #16: deferred follow-up ---
+
+
+def test_parse_deferred_extracts_items_and_strips_tail():
+    text = ("Goal x DoD: WHEN a SHALL b\nTests: pass\n"
+            "Deferred:\n- adapter Pg\n- file backend")
+    items, stripped = gates.parse_deferred(text)
+    assert items == ["adapter Pg", "file backend"]
+    assert "Deferred:" not in stripped
+    assert "DoD: WHEN a SHALL b" in stripped
+    assert gates.parse_deferred("no deferred here") == ([], "no deferred here")
+    assert gates.parse_deferred(None) == ([], "")
+
+
+def test_launch_ticket_carries_deferred_into_door_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(tgf.config, "REPOS", {})
+    monkeypatch.setattr(tgf.config, "TARGET_REPO", "")
+    monkeypatch.setattr(tgf, "make_workspace", lambda th, repo=None: (str(tmp_path / "wdf"), "worktree"))
+
+    def fake_run_loop(t, human_door=None, **kw):
+        human_door("ART")
+        return {"ok": True}
+    monkeypatch.setattr(tgf, "run_loop", fake_run_loop)
+    api, mem = TgStub(), MStub()
+    tgf.launch_ticket(
+        "Goal x DoD: WHEN a SHALL b\n"
+        "Tests: ```python\nfrom solution import f\ndef test_f():\n    assert f() == 1\n```\n"
+        "Deferred:\n- adapter Pg\n- file backend",
+        "tg-def1", mem, api)
+    payload = mem.door_get("tg-def1")
+    assert payload["deferred"] == ["adapter Pg", "file backend"]
+
+
+def test_door_approve_with_deferred_offers_create_button(monkeypatch):
+    monkeypatch.setattr(tgf, "finish_suspended", lambda *a, **k: None)
+    api, mem = TgStub(), MStub()
+    mem.doors["t1"] = {"deferred": ["adapter Pg", "file backend"], "repo": "/r"}
+    cb = {"data": "door:yes:t1", "id": "cb1", "message": {"message_id": 5}, "from": {"id": 1}}
+    tgf.handle_callback(cb, mem, api)
+    run = mem.get_run("t1")
+    assert run["deferred"] == ["adapter Pg", "file backend"] and run["deferred_repo"] == "/r"
+    assert any("📌" in s and "việc hoãn" in s for s in api.sent)
+    kb = api.keyboards[-1]
+    assert kb and "follow-up" in kb[0][0]["text"] and kb[0][0]["callback_data"] == "defer:create:t1"
+    assert api.answered[-1] == "✅ approved"
+
+
+def test_defer_create_issue_per_item_and_second_tap_noop(monkeypatch):
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/o/r.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    calls = []
+
+    def fr(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0, "stdout": "https://github.com/o/r/issues/42"})()
+    monkeypatch.setattr(tgf.subprocess, "run", fr)
+    api, mem = TgStub(), MStub()
+    mem.reg["t2"] = {"deferred": ["adapter Pg", "file backend"], "deferred_repo": "/r"}
+    cb = {"data": "defer:create:t2", "id": "cb2"}
+    tgf.handle_callback(cb, mem, api)
+    assert len(calls) == 2 and all(c[:3] == ["gh", "issue", "create"] for c in calls)
+    assert any("https://github.com/o/r/issues/42" in s for s in api.sent)
+    tgf.handle_callback(cb, mem, api)                    # double-tap: đã register deferred=[]
+    assert api.answered[-1] == "không có việc hoãn"
+
+
+def test_defer_create_no_cli_friendly_no_crash(monkeypatch):
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/o/r.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: None)
+    api, mem = TgStub(), MStub()
+    mem.reg["t3"] = {"deferred": ["adapter Pg"], "deferred_repo": "/r"}
+    cb = {"data": "defer:create:t3", "id": "cb3"}
+    tgf.handle_callback(cb, mem, api)
+    assert any("không tạo được issue" in s for s in api.sent)

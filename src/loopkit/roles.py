@@ -53,7 +53,10 @@ ANALYST = Role(
     "criterion, deterministic, no network/filesystem>\n```\n"
     "Với repo pending/hạ tầng, draft PHẢI kèm \"Gate: <one shell command>\" ưu tiên: script "
     "test sẵn có > helm template+lint / terraform validate / pytest > grep có chủ đích. "
-    "Gate: phải đứng TRƯỚC DoD: trong draft — đứng sau sẽ bị bỏ qua.",
+    "Gate: phải đứng TRƯỚC DoD: trong draft — đứng sau sẽ bị bỏ qua. "
+    "Khi câu trả lời của user THU HẸP scope (cắt bớt phần việc sang ticket sau), liệt kê "
+    "phần bị cắt dưới mục `Deferred:` (mỗi việc một dòng, bullet `- `), đặt CUỐI ticket — "
+    "chỉ khi thật sự có phần bị hoãn.",
 )
 
 REGISTRY = {r.name: r for r in (ORCHESTRATOR, CODE, INFRA, REVIEWER, ANALYST)}
