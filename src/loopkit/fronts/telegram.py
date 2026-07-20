@@ -61,6 +61,17 @@ def fetch_issue(repo_path: str, number):
         return None
 
 
+def agents_context(repo_path, cap=2500) -> str:
+    """Đầu AGENTS.md của repo đích -> chuỗi nhét vào refine context (issue #14): analyst thấy
+    tech-stack/quy ước repo đã ghi, khỏi hỏi lại. Front-side (engine vẫn brain-agnostic).
+    Không repo / không có AGENTS.md -> "" (không đổi flow)."""
+    if not repo_path:
+        return ""
+    md = (read_agents_md(repo_path) or "").strip()
+    # mask: idea được persist + /status cắt [:48] không mask lại — giữ invariant "idea luôn sạch"
+    return _mask(f"\n\n--- AGENTS.md (repo context) ---\n{md[:cap]}") if md else ""
+
+
 def enrich_idea_with_issue(text: str, repo_name) -> str:
     """Idea nhắc issue (chữ 'issue' hoặc '#<số>') -> append nội dung `gh/glab issue view/list`
     trước khi analyst đọc. Repo: token (qua config.REPOS) > LOOPKIT_TARGET_REPO; host detect từ
@@ -315,7 +326,8 @@ def handle_message(msg: dict, mem, api) -> None:
                     (f"Repo: {repo_key}\n" if repo_key else "") +
                     f"{gate_hint}\n\n"
                     "Viết Goal + EARS DoD dựa trên issue dưới đây; nếu là feature, DoD PHẢI yêu cầu test mới.\n\n"
-                    f"--- issue #{number} ---\n{_mask(out.strip()[:1500])}")
+                    f"--- issue #{number} ---\n{_mask(out.strip()[:1500])}"
+                    + agents_context(repo_path))
             thread = f"tg-{msg['message_id']}"
             mem.register(thread, status="refining", idea=idea, refine_turns=0)
             refine_step(thread, None, mem, api)
@@ -362,8 +374,9 @@ def handle_message(msg: dict, mem, api) -> None:
         refine_step(awaiting[0], text, mem, api)
     elif not awaiting:                                   # luật 2: idea mới
         thread = f"tg-{msg['message_id']}"
-        idea = enrich_idea_with_issue(text, repo_name)
-        mem.register(thread, status="refining", idea=_mask(idea[:2500]), refine_turns=0)
+        repo_path = config.REPOS.get(repo_name) if repo_name else config.TARGET_REPO
+        idea = _mask(enrich_idea_with_issue(text, repo_name)[:2500]) + agents_context(repo_path)
+        mem.register(thread, status="refining", idea=idea, refine_turns=0)
         refine_step(thread, None, mem, api)
     else:                                                # luật 3: mơ hồ -> từ chối
         api.send("⚠️ Đang có ≥2 ticket chờ trả lời — chốt bớt một cái đã.")

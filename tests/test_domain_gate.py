@@ -640,3 +640,42 @@ def test_cancel_unknown_or_not_awaiting(monkeypatch):
     tgf.handle_message({"message_id": 2, "text": "/cancel tg-nope"}, mem, api)  # lạ
     assert sum("không ở trạng thái chờ" in s for s in api.sent) == 2
     assert mem.reg["tg-3"]["status"] == "done"               # không đổi
+
+
+def test_agents_context_reads_head(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("# Rules\nReact 18 SPA + FastAPI backend.\n")
+    out = tgf.agents_context(str(tmp_path))
+    assert "AGENTS.md (repo context)" in out and "React 18" in out
+
+
+def test_agents_context_absent_or_no_repo(tmp_path):
+    assert tgf.agents_context(str(tmp_path)) == ""      # không có file
+    assert tgf.agents_context("") == ""                 # không repo
+    assert tgf.agents_context(None) == ""
+
+
+def test_agents_context_capped(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("z" * 9000)   # z: không trùng ký tự nào trong header
+    out = tgf.agents_context(str(tmp_path), cap=100)
+    assert out.count("z") == 100                         # cắt đúng cap
+
+
+def test_resolve_seeds_agents_context(monkeypatch, tmp_path):
+    (tmp_path / "AGENTS.md").write_text("Frontend: React 18. Backend: FastAPI.")
+    monkeypatch.setattr(tgf.config, "REPOS", {"noddle": str(tmp_path)})
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/o/noddle.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    monkeypatch.setattr(tgf.subprocess, "run",
+                        lambda cmd, **k: type("R", (), {"returncode": 0, "stdout": "Issue #1: add login"})())
+    seen = {}
+    monkeypatch.setattr(tgf, "refine_step", lambda th, ans, m, a: seen.update(idea=m.get_run(th).get("idea", "")))
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/resolve #1 noddle"}, mem, api)
+    assert "React 18" in seen["idea"] and "Issue #1: add login" in seen["idea"]   # cả issue lẫn AGENTS.md
+
+
+def test_agents_context_masks_secrets(tmp_path, monkeypatch):
+    monkeypatch.setattr(tgf.config, "ENABLE_SHIELD", True)
+    (tmp_path / "AGENTS.md").write_text("Contact: dev@example.com token=abcd1234secret")
+    out = tgf.agents_context(str(tmp_path))
+    assert "dev@example.com" not in out and "abcd1234secret" not in out   # secret bị mask trước khi persist
