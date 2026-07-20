@@ -27,6 +27,13 @@ def test_make_cmd_gate_timeout_fails_closed(tmp_path, monkeypatch):
     assert not ok and "timeout" in detail
 
 
+def test_parse_gate_cmd_strips_markdown_backticks():
+    # live 2026-07-19: draft ghi Gate: `pytest ...` — backtick sống sót tới sh -c
+    # thành command substitution: pytest chạy rồi stdout bị execute ("....: not found")
+    cmd, _ = gates.parse_gate_cmd("Gate: `python -m pytest backend/tests -q`\nDoD: WHEN a SHALL b")
+    assert cmd == "python -m pytest backend/tests -q"
+
+
 def test_parse_gate_cmd_ignores_prose_gate_inside_dod():
     text = ("Repo: x\nDoD: WHEN user reaches the checkout gate: THEN system SHALL notify\n"
             "Tests: pass")
@@ -588,3 +595,48 @@ def test_repos_command_empty(monkeypatch):
     api, mem = TgStub(), MStub()
     tgf.handle_message({"message_id": 1, "text": "/repos"}, mem, api)
     assert any("chưa cấu hình" in s for s in api.sent)
+
+
+def _await_mem(*threads):
+    """MStub với các thread đang refining."""
+    m = MStub()
+    for t in threads:
+        m.reg[t] = {"status": "refining"}
+    return m
+
+
+def test_cancel_by_thread_id(monkeypatch):
+    api, mem = TgStub(), _await_mem("tg-5", "tg-9")
+    tgf.handle_message({"message_id": 1, "text": "/cancel tg-5"}, mem, api)
+    assert mem.reg["tg-5"]["status"] == "refine_cancelled"
+    assert mem.reg["tg-9"]["status"] == "refining"          # cái kia không đụng
+    assert any("Đã huỷ" in s and "tg-5" in s for s in api.sent)
+
+
+def test_cancel_bare_one_awaiting(monkeypatch):
+    api, mem = TgStub(), _await_mem("tg-7")
+    tgf.handle_message({"message_id": 1, "text": "/cancel"}, mem, api)
+    assert mem.reg["tg-7"]["status"] == "refine_cancelled"
+
+
+def test_cancel_bare_two_awaiting_lists_not_cancels(monkeypatch):
+    api, mem = TgStub(), _await_mem("tg-7", "tg-8")
+    tgf.handle_message({"message_id": 1, "text": "/cancel"}, mem, api)
+    assert mem.reg["tg-7"]["status"] == "refining" and mem.reg["tg-8"]["status"] == "refining"
+    out = api.sent[-1]
+    assert "tg-7" in out and "tg-8" in out                   # liệt kê để tự chọn
+
+
+def test_cancel_bare_none_awaiting(monkeypatch):
+    api, mem = TgStub(), MStub()
+    tgf.handle_message({"message_id": 1, "text": "/cancel"}, mem, api)
+    assert any("không có thread" in s for s in api.sent)
+
+
+def test_cancel_unknown_or_not_awaiting(monkeypatch):
+    api, mem = TgStub(), MStub()
+    mem.reg["tg-3"] = {"status": "done"}
+    tgf.handle_message({"message_id": 1, "text": "/cancel tg-3"}, mem, api)     # done, không chờ
+    tgf.handle_message({"message_id": 2, "text": "/cancel tg-nope"}, mem, api)  # lạ
+    assert sum("không ở trạng thái chờ" in s for s in api.sent) == 2
+    assert mem.reg["tg-3"]["status"] == "done"               # không đổi
