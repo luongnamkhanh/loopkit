@@ -79,7 +79,8 @@ def _create_issues(repo_path: str, items) -> list:
     urls = []
     for item in items:
         try:
-            r = subprocess.run([tool, "issue", "create", "--title", item[:200]],
+            # mask trước --title: đây là WRITE ra repo (có thể public) — secret/PII không được lọt
+            r = subprocess.run([tool, "issue", "create", "--title", _mask(item)[:200]],
                                cwd=repo_path, capture_output=True, text=True, timeout=30)
             m = re.search(r"https://\S+", r.stdout or "")
             if r.returncode == 0 and m:
@@ -436,7 +437,7 @@ def handle_callback(cb: dict, mem, api) -> None:
             items = list(door["deferred"])
             mem.register(thread, deferred=items, deferred_repo=door.get("repo", ""))
             api.send("📌 " + str(len(items)) + " việc hoãn lại:\n" +
-                     "\n".join("• " + i for i in items),
+                     "\n".join("• " + _mask(i) for i in items),
                      keyboard=[[{"text": "📌 Tạo follow-up issue",
                                  "callback_data": f"defer:create:{thread}"}]])
         api.answer_callback(cb.get("id", ""), "✅ approved" if decision else "🚫 rejected")

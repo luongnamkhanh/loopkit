@@ -771,3 +771,17 @@ def test_defer_create_no_cli_friendly_no_crash(monkeypatch):
     cb = {"data": "defer:create:t3", "id": "cb3"}
     tgf.handle_callback(cb, mem, api)
     assert any("không tạo được issue" in s for s in api.sent)
+
+
+def test_defer_create_masks_secret_in_title(monkeypatch, tmp_path):
+    monkeypatch.setattr(tgf.config, "ENABLE_SHIELD", True)
+    monkeypatch.setattr(tgf.deliver, "_remote_url", lambda r: "https://github.com/o/r.git")
+    monkeypatch.setattr(tgf.shutil, "which", lambda t: "/usr/bin/gh")
+    seen = {}
+    def fr(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        seen["title"] = cmd[cmd.index("--title") + 1]
+        return type("R", (), {"returncode": 0, "stdout": "https://github.com/o/r/issues/9"})()
+    monkeypatch.setattr(tgf.subprocess, "run", fr)
+    urls = tgf._create_issues(str(tmp_path), ["gọi khách 0912345678 token=abcd1234secret"])
+    assert urls == ["https://github.com/o/r/issues/9"]
+    assert "0912345678" not in seen["title"] and "abcd1234secret" not in seen["title"]  # masked TRƯỚC khi ra repo
