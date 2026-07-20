@@ -672,3 +672,10 @@ def test_resolve_seeds_agents_context(monkeypatch, tmp_path):
     api, mem = TgStub(), MStub()
     tgf.handle_message({"message_id": 1, "text": "/resolve #1 noddle"}, mem, api)
     assert "React 18" in seen["idea"] and "Issue #1: add login" in seen["idea"]   # cả issue lẫn AGENTS.md
+
+
+def test_agents_context_masks_secrets(tmp_path, monkeypatch):
+    monkeypatch.setattr(tgf.config, "ENABLE_SHIELD", True)
+    (tmp_path / "AGENTS.md").write_text("Contact: dev@example.com token=abcd1234secret")
+    out = tgf.agents_context(str(tmp_path))
+    assert "dev@example.com" not in out and "abcd1234secret" not in out   # secret bị mask trước khi persist

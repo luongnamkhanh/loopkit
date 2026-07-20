@@ -68,7 +68,8 @@ def agents_context(repo_path, cap=2500) -> str:
     if not repo_path:
         return ""
     md = (read_agents_md(repo_path) or "").strip()
-    return f"\n\n--- AGENTS.md (repo context) ---\n{md[:cap]}" if md else ""
+    # mask: idea được persist + /status cắt [:48] không mask lại — giữ invariant "idea luôn sạch"
+    return _mask(f"\n\n--- AGENTS.md (repo context) ---\n{md[:cap]}") if md else ""
 
 
 def enrich_idea_with_issue(text: str, repo_name) -> str:
