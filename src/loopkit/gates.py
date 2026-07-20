@@ -112,6 +112,30 @@ def parse_gate_cmd(text: str):
     return cmd, (text[:m.start()] + text[m.end():]).strip()
 
 
+_DEFERRED_RE = re.compile(r"(?i)\bdeferred:")
+
+
+def parse_deferred(text: str):
+    """'... Deferred:\\n- item1\\n- item2' (analyst đặt CUỐI ticket) -> (items, text đã strip
+    block). Khớp `Deferred:` ĐẦU TIÊN (case-insensitive); mọi thứ SAU nó tới hết text là block —
+    mỗi dòng bỏ bullet đầu (`- `/`• `/`* `) + whitespace, dòng rỗng bị bỏ. Không có -> ([], text
+    or ""). None -> ([], "")."""
+    text = text or ""
+    m = _DEFERRED_RE.search(text)
+    if not m:
+        return [], text
+    items = []
+    for line in text[m.end():].splitlines():
+        line = line.strip()
+        for bullet in ("- ", "• ", "* "):
+            if line.startswith(bullet):
+                line = line[len(bullet):].strip()
+                break
+        if line:
+            items.append(line)
+    return items, text[:m.start()].rstrip()
+
+
 def _gate_env() -> dict:
     """Env TRUNG TÍNH cho mọi gate subprocess: strip config runtime + secrets của loopkit
     (suite repo đích không được phụ thuộc LOOPKIT_*; lệnh gate không được thấy token) và
